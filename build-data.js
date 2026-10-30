@@ -1,5 +1,6 @@
 // node build-data.js
-// Merges THE100 chapter files + _people YAML into data.js
+// Merges obsidianA/wiki/_work/THE100 chapters + _people/_region YAML into data.js.
+// Source repository and setup: see GUIDE.md and README.md.
 
 const fs   = require('fs');
 const path = require('path');
@@ -104,8 +105,8 @@ for (const f of peopleFiles) {
 const peopleStems = Object.keys(peopleData);
 
 // ── Map rank → _people stem ───────────────────────────────────────────
-// THE100 chapter files no longer carry rank/about frontmatter, so resolve
-// the person from the filename `THE100-NNN {zh} {en}.md`. _people files often
+// Resolve the person from the filename `THE100-NNN {zh} {en}.md` rather than
+// the chapter's rank/about frontmatter. _people files often
 // use a shorter name (法拉第 vs 迈克尔·法拉第), so fall back to matching where
 // the chapter's zh/en ends with the _people stem's zh/en.
 const the100Files = fs.readdirSync(THE100_DIR).filter(f => f.endsWith('.md')).sort();
@@ -370,8 +371,8 @@ const ALL_TAGS = ${JSON.stringify(allTags, null, 2)};
 `;
 
 // Safety guard: refuse to overwrite data.js with degraded data. If the vault
-// notes aren't fully readable (e.g. iCloud placeholders, or missing
-// rank/about/region frontmatter) the person data collapses — abort instead of
+// notes aren't fully readable (e.g. unavailable files, unmatched person
+// filenames, or missing region metadata) the person data collapses — abort instead of
 // clobbering the good data.js. Set FORCE=1 to override.
 const withRegion = persons.filter(p => p.region).length;
 const outPath = process.env.OUT_DATA || OUT_FILE;

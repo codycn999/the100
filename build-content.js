@@ -1,5 +1,6 @@
 // Run: node build-content.js
-// Reads all THE100 markdown files and generates content.js
+// Reads obsidianA/wiki/_work/THE100 markdown files and generates content.js.
+// Source repository and setup: see GUIDE.md and README.md.
 
 const fs = require('fs');
 const path = require('path');

@@ -40,7 +40,7 @@ const PERSONS = [
     "domain": "Nature",
     "category": "Science",
     "role": "Physicist",
-    "img": null
+    "img": "https://docs.suphy.top/file/f_deae583773e4bb32d30bc1e813986137"
   },
   {
     "rank": 3,
@@ -330,7 +330,7 @@ const PERSONS = [
     "domain": "Nature",
     "category": "Science",
     "role": "Biologist",
-    "img": null
+    "img": "https://docs.suphy.top/file/f_6921f304d93b76c85888e28637530b57"
   },
   {
     "rank": 17,
@@ -672,7 +672,7 @@ const PERSONS = [
     "domain": "Society",
     "category": "Frontier",
     "role": "Conqueror",
-    "img": null
+    "img": "https://upload.wikimedia.org/wikipedia/commons/4/49/Alexander_Mosaic_detail_of_Alexander_the_Great_%283x4_cropped%29.jpg"
   },
   {
     "rank": 34,
@@ -692,7 +692,7 @@ const PERSONS = [
     "domain": "Society",
     "category": "Governance",
     "role": "General",
-    "img": null
+    "img": "https://docs.suphy.top/file/f_af8f98ecadf8ed227e57d153c258fec5"
   },
   {
     "rank": 35,
@@ -712,7 +712,7 @@ const PERSONS = [
     "domain": "Nature",
     "category": "Tech",
     "role": "Inventor",
-    "img": "https://docs.suphy.top/file/ThomasEdison.png"
+    "img": "https://docs.suphy.top/file/f_c549c16d383c5d3564feea3f296f4f39"
   },
   {
     "rank": 36,
@@ -913,7 +913,7 @@ const PERSONS = [
     "domain": "Spirit",
     "category": "Creative",
     "role": "Composer",
-    "img": null
+    "img": "https://docs.suphy.top/file/f_4b1608524cb1602fbb326c11919e7f7c"
   },
   {
     "rank": 46,

@@ -1,8 +1,8 @@
 // node enrich-data.js
 // Merges the complete country reference (country-ref.js) into the existing
 // data.js WITHOUT touching the person data. Use this when the Obsidian notes
-// can't be rebuilt by build-data.js (e.g. THE100 chapter files lost their
-// rank/about frontmatter). build-data.js remains the canonical generator and
+// can't be rebuilt by build-data.js (e.g. the source vault is unavailable).
+// build-data.js remains the canonical generator and
 // already contains the same merge logic for when the vault is rebuildable.
 
 const fs = require('fs');
