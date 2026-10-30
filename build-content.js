@@ -3,9 +3,10 @@
 
 const fs = require('fs');
 const path = require('path');
+const { requireVault } = require('./source-config.js');
 
-const SRC = 'C:/Users/admin/iCloudDrive/iCloud~md~obsidian/A/wiki/_work/THE100';
-const OUT = path.join(__dirname, 'content.js');
+const SRC = process.env.THE100_DIR || path.join(requireVault(), '_work', 'THE100');
+const OUT = process.env.OUT_CONTENT || path.join(__dirname, 'content.js');
 
 const files = fs.readdirSync(SRC).filter(f => f.endsWith('.md')).sort();
 

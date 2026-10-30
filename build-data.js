@@ -3,11 +3,12 @@
 
 const fs   = require('fs');
 const path = require('path');
+const { requireVault } = require('./source-config.js');
 const COUNTRY_REF = require('./country-ref.js');  // complete country↔region reference
 
-const THE100_DIR  = 'C:/Users/admin/iCloudDrive/iCloud~md~obsidian/A/wiki/_work/THE100/';
-const PEOPLE_DIR  = 'C:/Users/admin/iCloudDrive/iCloud~md~obsidian/A/wiki/_people/';
-const REGION_DIR  = 'C:/Users/admin/iCloudDrive/iCloud~md~obsidian/A/wiki/_region/';
+const THE100_DIR = process.env.THE100_DIR || path.join(requireVault(), '_work', 'THE100');
+const PEOPLE_DIR = process.env.PEOPLE_DIR || path.join(requireVault(), '_people');
+const REGION_DIR = process.env.REGION_DIR || path.join(requireVault(), '_region');
 const OUT_FILE    = path.join(__dirname, 'data.js');
 
 // Region buckets are now derived purely from the _region hierarchy

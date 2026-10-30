@@ -6,6 +6,7 @@
 <title>THE 100 · 影响人类历史进程的100名人</title>
 <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson@3"></script>
+<script src="role-colors.js"></script>
 <script src="data.js"></script>
 <script src="content.js"></script>
 <style>
@@ -345,11 +346,21 @@ body {
   animation: spin .8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+#map-svg { touch-action: none; }
+.person-dot:focus, .tl-dot:focus, .tl-bar:focus { stroke: #fff; stroke-width: 3px; outline: none; }
+#map-error { padding: 8px; color: #f0b86e; }
+.para-en, .para-zh { white-space: pre-wrap; }
+@media (max-width: 600px) {
+  #detail-panel { width: 100%; right: -100%; }
+}
 </style>
 </head>
 <body>
 
 <div id="loading"><div class="spinner"></div><span>载入地图中…</span></div>
+
+<div id="map-error" role="alert" hidden>地图加载失败，人物时间线仍可使用。 <button id="map-retry" type="button">重试地图</button></div>
 
 <div id="header">
   <div style="display:flex;align-items:baseline;gap:8px">
@@ -681,12 +692,24 @@ async function openDetail(p) {
   if (!pairs || !pairs.length) {
     body.innerHTML = '<div style="color:#6e7681;font-size:12px">暂无内容</div>';
   } else {
-    body.innerHTML = pairs.map((pair, i) => `
-      <div class="para-block">
-        ${i > 0 ? '<hr class="para-divider">' : ''}
-        <div class="para-en">${pair.en}</div>
-        ${pair.zh ? `<div class="para-zh">${pair.zh}</div>` : ''}
-      </div>`).join('');
+    body.replaceChildren();
+    pairs.forEach((pair, i) => {
+      const block = document.createElement('div');
+      block.className = 'para-block';
+      if (i > 0) {
+        const divider = document.createElement('hr');
+        divider.className = 'para-divider';
+        block.append(divider);
+      }
+      for (const language of ['en', 'zh']) {
+        if (!pair[language]) continue;
+        const paragraph = document.createElement('div');
+        paragraph.className = 'para-' + language;
+        paragraph.textContent = pair[language];
+        block.append(paragraph);
+      }
+      body.append(block);
+    });
   }
   document.getElementById('detail-links').innerHTML = `
     <a href="https://docs.suphy.top/file/book/The100ARankingOfTheMostInfluentialPersonsInHistory.pdf" target="_blank">📖 英文 PDF</a>
@@ -876,7 +899,6 @@ function initRegionFilter() {
 // MAP
 // ═══════════════════════════════════════════════════════════
 
-const PANEL_W = 400;                 // detail panel width (matches CSS)
 const MAP_W_K = 0.175, MAP_H_K = 0.318;  // Natural Earth 1: scale↔dimension ratios
 
 function getMapDims() {
@@ -914,7 +936,7 @@ function redrawMap() {
   // centers within the remaining space to the left of the panel.
   const panelEl = document.getElementById('detail-panel');
   const panelOpen = panelEl && panelEl.classList.contains('open');
-  const availW = W - (panelOpen ? PANEL_W : 0);
+  const availW = Math.max(1, W - (panelOpen && !window.matchMedia('(max-width: 600px)').matches ? document.getElementById('detail-panel').getBoundingClientRect().width : 0));
 
   const baseScale = computeScale(fitMode, availW, H);
   const zk = fitMode === 'auto' ? userZoom : 1;
@@ -948,13 +970,13 @@ function redrawMap() {
 
 // ── Map interaction: wheel zoom + drag pan ──────────────────
 function setupMapInteraction(svgEl) {
-  let dragging = false, dragSX = 0, dragSY = 0, startPX = 0, startPY = 0;
+  let dragSX = 0, dragSY = 0, startPX = 0, startPY = 0;
 
   svgEl.addEventListener('wheel', (e) => {
     e.preventDefault();
     const { W, H } = getMapDims();
     const panelOpen = document.getElementById('detail-panel').classList.contains('open');
-    const availW = W - (panelOpen ? PANEL_W : 0);
+    const availW = Math.max(1, W - (panelOpen && !window.matchMedia('(max-width: 600px)').matches ? document.getElementById('detail-panel').getBoundingClientRect().width : 0));
 
     if (fitMode === 'auto') {
       // Auto: wheel zooms toward the cursor (floor = original size).
@@ -980,49 +1002,54 @@ function setupMapInteraction(svgEl) {
     redrawMap();
   }, { passive: false });
 
-  svgEl.addEventListener('mousedown', (e) => {
+  const pointers = new Map();
+  let pinchDistance = 0, pinchZoom = 1, moved = false;
+  const distance = () => {
+    const points = [...pointers.values()];
+    return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+  };
+  svgEl.addEventListener('pointerdown', e => {
     if (e.button !== 0) return;
-    dragging = true;
-    dragSX = e.clientX; dragSY = e.clientY;
-    startPX = userPanX; startPY = userPanY;
-    svgEl.style.cursor = 'grabbing';
-    e.preventDefault();
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 1) {
+      dragSX = e.clientX; dragSY = e.clientY;
+      startPX = userPanX; startPY = userPanY; moved = false;
+    } else if (pointers.size === 2) {
+      pinchDistance = distance(); pinchZoom = userZoom; moved = true;
+    }
   });
-
-  window.addEventListener('mousemove', (e) => {
-    if (!dragging) return;
-    userPanX = startPX + (e.clientX - dragSX);
-    userPanY = startPY + (e.clientY - dragSY);
+  svgEl.addEventListener('pointermove', e => {
+    if (!pointers.has(e.pointerId)) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) {
+      if (fitMode === 'auto' && pinchDistance > 0)
+        userZoom = Math.max(1, Math.min(8, pinchZoom * distance() / pinchDistance));
+    } else if (pointers.size === 1) {
+      if (Math.hypot(e.clientX - dragSX, e.clientY - dragSY) < 5 && !moved) return;
+      moved = true;
+      svgEl.setPointerCapture(e.pointerId);
+      userPanX = startPX + e.clientX - dragSX;
+      userPanY = startPY + e.clientY - dragSY;
+    }
     redrawMap();
   });
-
-  window.addEventListener('mouseup', () => {
-    if (dragging) { dragging = false; svgEl.style.cursor = ''; }
-  });
-
-  svgEl.addEventListener('dblclick', () => {
-    userZoom = 1; userPanX = 0; userPanY = 0;
-    redrawMap();
-  });
-
-  // Touch support
-  let pinchDist0 = 0, pinchZoom0 = 1;
-  svgEl.addEventListener('touchstart', (e) => {
-    if (e.touches.length === 2) {
-      pinchDist0 = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
-      pinchZoom0 = userZoom;
+  function endPointer(e) {
+    pointers.delete(e.pointerId);
+    if (pointers.size === 1) {
+      const point = [...pointers.values()][0];
+      dragSX = point.x; dragSY = point.y;
+      startPX = userPanX; startPY = userPanY;
     }
-  }, { passive: true });
-  svgEl.addEventListener('touchmove', (e) => {
-    if (e.touches.length === 2 && fitMode === 'auto') {
-      const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
-      if (pinchDist0 > 0) {
-        userZoom = Math.max(1, Math.min(8, pinchZoom0 * (d / pinchDist0)));
-        redrawMap();
-      }
-    }
-  }, { passive: true });
-  svgEl.addEventListener('touchend', () => { pinchDist0 = 0; });
+  }
+  svgEl.addEventListener('pointerup', endPointer);
+  svgEl.addEventListener('pointercancel', endPointer);
+  svgEl.addEventListener('pointerleave', e => {
+    if (!svgEl.hasPointerCapture(e.pointerId)) endPointer(e);
+  });
+  svgEl.addEventListener('click', e => {
+    if (moved) { e.preventDefault(); e.stopImmediatePropagation(); moved = false; }
+  }, true);
+  svgEl.addEventListener('dblclick', resetMapZoom);
 }
 
 function resetMapZoom() {
@@ -1031,7 +1058,12 @@ function resetMapZoom() {
 }
 
 async function buildMap() {
-  worldData = await d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const loaded = await d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json', { signal: controller.signal });
+    worldData = loaded;
+  } finally { clearTimeout(timeout); }
   const { W, H } = getMapDims();
   projection = d3.geoNaturalEarth1();
   geoPath = d3.geoPath().projection(projection);
@@ -1098,35 +1130,6 @@ async function buildMap() {
 
   redrawMap();
 
-  // Domain filter buttons
-  document.querySelectorAll('.filter-btn[data-filter="domain"]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      activeDomain = btn.dataset.value;
-      document.querySelectorAll('.filter-btn[data-filter="domain"]')
-        .forEach(b => b.classList.toggle('active', b === btn));
-      applyAllFilters();
-    });
-  });
-
-  // Fit buttons
-  document.querySelectorAll('#map-fit-btns .fit-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      fitMode = btn.dataset.mode;
-      document.querySelectorAll('#map-fit-btns .fit-btn').forEach(b => b.classList.toggle('active', b === btn));
-      resetMapZoom();
-    });
-  });
-
-  // Color-mode buttons (区域 / 领域 / 角色)
-  document.querySelectorAll('#map-color-btns .fit-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      colorMode = btn.dataset.color;
-      document.querySelectorAll('#map-color-btns .fit-btn').forEach(b => b.classList.toggle('active', b === btn));
-      mapSvg.selectAll('.person-dot').attr('fill', d => nodeColor(d));
-      renderTimeline();
-    });
-  });
-
   // ResizeObserver
   new ResizeObserver(() => {
     userZoom = 1; userPanX = 0; userPanY = 0;
@@ -1136,9 +1139,9 @@ async function buildMap() {
   // Map zoom/pan interaction
   setupMapInteraction(document.getElementById('map-svg'));
 
-  buildTimeline();
-  initRegionFilter();
-  document.getElementById('loading').style.display = 'none';
+  enablePersonKeyboard();
+  applyAllFilters();
+  applyRegionEmphasis();
 }
 
 // ── Unified filter (domain + region) ───────────────────────
@@ -1153,6 +1156,7 @@ function applyAllFilters() {
   const timeMatch = d => d.death >= tlState.start && d.birth <= tlState.end;
 
   d3.selectAll('.person-dot')
+    .attr('tabindex', d => domainMatch(d) && regionMatch(d) && timeMatch(d) ? 0 : -1)
     .transition().duration(400)
     .attr('opacity', d => {
       if (activeRank && d.rank !== activeRank) return 0.25;
@@ -1160,6 +1164,7 @@ function applyAllFilters() {
     })
     .attr('pointer-events', d => (domainMatch(d) && regionMatch(d) && timeMatch(d)) ? 'auto' : 'none');
   d3.selectAll('.tl-dot,.tl-bar')
+    .attr('tabindex', d => (!activeRank || d.rank === activeRank) && domainMatch(d) && regionMatch(d) ? 0 : -1)
     .transition().duration(400)
     .attr('opacity', d => {
       if (activeRank && d.rank !== activeRank) return 0.12;
@@ -1355,6 +1360,8 @@ function renderTimeline() {
   } else {
     renderDots(inView, start, end, W);
   }
+  applyAllFilters();
+  enablePersonKeyboard();
 }
 
 // ── Dot mode ────────────────────────────────────────────────
@@ -1616,7 +1623,73 @@ function renderLifeline(persons, start, end, W) {
 // INIT
 // ═══════════════════════════════════════════════════════════
 
-buildMap();
+function enablePersonKeyboard() {
+  d3.selectAll('.person-dot,.tl-dot,.tl-bar')
+    .attr('role', 'button')
+    .attr('aria-label', d => '#' + d.rank + ' ' + d.zh + ' ' + d.en)
+    .on('keydown', (evt, d) => {
+      if (evt.key === 'Enter' || evt.key === ' ') {
+        evt.preventDefault(); openDetail(d);
+      }
+    });
+}
+function initControls() {
+  // Domain filter buttons
+  document.querySelectorAll('.filter-btn[data-filter="domain"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      activeDomain = btn.dataset.value;
+      document.querySelectorAll('.filter-btn[data-filter="domain"]')
+        .forEach(b => b.classList.toggle('active', b === btn));
+      applyAllFilters();
+    });
+  });
+
+  // Fit buttons
+  document.querySelectorAll('#map-fit-btns .fit-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      fitMode = btn.dataset.mode;
+      document.querySelectorAll('#map-fit-btns .fit-btn').forEach(b => b.classList.toggle('active', b === btn));
+      resetMapZoom();
+    });
+  });
+
+  // Color-mode buttons (区域 / 领域 / 角色)
+  document.querySelectorAll('#map-color-btns .fit-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      colorMode = btn.dataset.color;
+      document.querySelectorAll('#map-color-btns .fit-btn').forEach(b => b.classList.toggle('active', b === btn));
+      d3.selectAll('.person-dot').attr('fill', d => nodeColor(d));
+      renderTimeline();
+    });
+  });
+
+
+  buildTimeline();
+  initRegionFilter();
+}
+let mapLoading = false;
+async function loadMap() {
+  if (mapLoading) return;
+  mapLoading = true;
+  const retry = document.getElementById('map-retry');
+  retry.disabled = true;
+  try {
+    await buildMap();
+    document.getElementById('map-error').hidden = true;
+  } catch (error) {
+    worldData = null;
+    document.getElementById('map-error').hidden = false;
+    console.error('Map initialization failed', error);
+  } finally {
+    document.getElementById('loading').style.display = 'none';
+    mapLoading = false;
+    retry.disabled = false;
+  }
+}
+initControls();
+document.getElementById('map-retry').addEventListener('click', loadMap);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDetail(); });
+loadMap();
 
 window.addEventListener('resize', () => {
   clearTimeout(window._resizeTL);
