@@ -46,3 +46,5 @@
 `OUT_DATA`、`OUT_CONTENT` 可指定其他输出路径，便于比较结果后再替换。`build-data.js` 在少于 95 位人物解析出地区时会拒绝写入；先检查源笔记与匹配情况，不要直接用 `FORCE` 跳过保护。
 
 本站提交了已生成的 `data.js`、`content.js`，可直接作为静态网站预览或部署。来源仓库与本站独立维护；复现结果时需记录并使用相同的来源提交和 Node.js 版本。
+
+`index.html` 中 `data.js` 的脚本 URL 带有 `v` 版本参数，用于避开浏览器和 CDN 的旧缓存。更新 `data.js` 后，应同步更新此参数（可使用 `git hash-object data.js` 输出的前七位），再一起提交部署。
