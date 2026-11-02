@@ -46,3 +46,44 @@ test('both timeline modes restore filters and keyboard behavior after rendering'
     assert.deepEqual(calls, [[lifeline ? 'lifeline' : 'dots', 1], 'filters', 'keyboard']);
   }
 });
+
+test('default reader width reserves map space; extra width overlays it', () => {
+  const mapCode = code.slice(code.indexOf('function computeScale('), code.indexOf('// ── Map interaction:'));
+  assert.ok(mapCode.includes('function redrawMap()'));
+  const calls = [];
+  const projection = {
+    scale(value) { calls.push(['scale', value]); return this; },
+    translate(value) { calls.push(['translate', value]); return this; },
+  };
+  const selection = { attr() { return this; } };
+  const geoPath = () => { const path = () => ''; path.projection = () => path; return path; };
+  const panel = { open: false, width: 400,
+    classList: { contains() { return panel.open; } },
+    getBoundingClientRect() { return { width: panel.width }; },
+  };
+  const context = vm.createContext({
+    MAP_W_K: 0.175, MAP_H_K: 0.318, worldData: {}, projection,
+    getMapDims: () => ({ W: 1200, H: 500 }),
+    document: { getElementById: () => panel },
+    window: { innerWidth: 1200, matchMedia: () => ({ matches: false }) },
+    fitMode: 'auto', userZoom: 1, userPanX: 0, userPanY: 0,
+    d3: { geoPath, geoGraticule: () => () => ({}) },
+    mapSvg: { select: () => selection, selectAll: () => selection },
+    PERSONS: [],
+  });
+  vm.runInContext(mapCode, context);
+  const rendered = () => {
+    calls.length = 0;
+    vm.runInContext('redrawMap()', context);
+    return calls.map(([key, value]) => [key, Array.isArray(value) ? Array.from(value) : value]);
+  };
+  assert.deepEqual(rendered(), [['scale', 159], ['translate', [600, 250]]]);
+  panel.open = true;
+  assert.deepEqual(rendered(), [['scale', 140], ['translate', [400, 250]]]);
+  panel.width = 700;
+  assert.deepEqual(rendered(), [['scale', 140], ['translate', [400, 250]]]);
+  panel.width = 320;
+  assert.deepEqual(rendered(), [['scale', 154], ['translate', [440, 250]]]);
+  context.window.matchMedia = () => ({ matches: true });
+  assert.deepEqual(rendered(), [['scale', 159], ['translate', [600, 250]]]);
+});

@@ -817,6 +817,7 @@ async function openDetail(p) {
   const body = document.getElementById('detail-body');
   body.innerHTML = '<div style="color:#8b949e;font-size:12px;padding:8px 0">载入中…</div>';
   document.getElementById('detail-panel').classList.add('open');
+  redrawMap();
 
   const text = typeof CONTENT !== 'undefined' ? CONTENT[p.rank] : null;
   const pairs = parseMD(text);
@@ -851,9 +852,10 @@ function closeDetail() {
   stopDetailResize();
   document.getElementById('detail-panel').classList.remove('open');
   setActive(null);
+  redrawMap();
 }
 
-// The panel overlays the map; resizing never changes the map projection.
+// Reserve up to the default reader width; extra width overlays the map.
 const detailPanel = document.getElementById('detail-panel');
 const detailResizeHandle = document.getElementById('detail-resize-handle');
 let detailWidth = 400;
@@ -868,6 +870,7 @@ function setDetailWidth(width = detailWidth) {
   detailResizeHandle.setAttribute('aria-valuemin', min);
   detailResizeHandle.setAttribute('aria-valuemax', max);
   detailResizeHandle.setAttribute('aria-valuenow', window.innerWidth <= 600 ? max : detailWidth);
+  redrawMap();
 }
 function stopDetailResize(e) {
   if (!detailResizeStart || (e && e.pointerId !== detailResizeStart.pointerId)) return;
@@ -1089,13 +1092,19 @@ function computeScale(mode, W, H) {
   return Math.min(W * MAP_W_K, H * MAP_H_K);  // auto: fit all
 }
 
+function getMapAvailableWidth(W) {
+  const panel = document.getElementById('detail-panel');
+  if (window.matchMedia('(max-width: 600px)').matches || !panel.classList.contains('open')) return W;
+  return Math.max(1, W - Math.min(400, panel.getBoundingClientRect().width));
+}
+
 // Content size (px) the projected map occupies at a given scale.
 function mapContentSize(scale) {
   return { mw: scale / MAP_W_K, mh: scale / MAP_H_K };
 }
 
 // Clamp pan so the map can't be dragged/scrolled past its own edges.
-// Use the full map viewport, including the area covered by the detail panel.
+// Use the same available viewport as the projection and zoom center.
 function clampPan(scale, availW, H) {
   const { mw, mh } = mapContentSize(scale);
   const overX = (mw - availW) / 2;
@@ -1107,13 +1116,14 @@ function clampPan(scale, availW, H) {
 function redrawMap() {
   if (!worldData || !projection) return;
   const { W, H } = getMapDims();
+  const availW = getMapAvailableWidth(W);
 
-  const baseScale = computeScale(fitMode, W, H);
+  const baseScale = computeScale(fitMode, availW, H);
   const zk = fitMode === 'auto' ? userZoom : 1;
   const scale = baseScale * zk;
 
-  clampPan(scale, W, H);
-  const tx = W / 2 + userPanX;
+  clampPan(scale, availW, H);
+  const tx = availW / 2 + userPanX;
   const ty = H / 2 + userPanY;
 
   projection.scale(scale).translate([tx, ty]);
@@ -1145,6 +1155,7 @@ function setupMapInteraction(svgEl) {
   svgEl.addEventListener('wheel', (e) => {
     e.preventDefault();
     const { W, H } = getMapDims();
+    const availW = getMapAvailableWidth(W);
     if (fitMode === 'auto') {
       // Auto: wheel zooms toward the cursor (floor = original size).
       const delta = e.deltaY > 0 ? 0.88 : 1.14;
@@ -1154,7 +1165,7 @@ function setupMapInteraction(svgEl) {
       const rect = svgEl.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
-      const cx = W / 2, cy = H / 2;
+      const cx = availW / 2, cy = H / 2;
       const ratio = newZ / userZoom;
       // Keep the geographic point under the cursor fixed.
       userPanX = mx - (mx - cx - userPanX) * ratio - cx;
