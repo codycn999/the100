@@ -177,16 +177,33 @@ body {
 /* ── Detail Panel ── */
 #detail-panel {
   position: fixed;
-  top: 48px; right: -420px; width: 400px; bottom: 0;
+  top: 48px; right: 0; width: var(--detail-width, 400px); bottom: 0;
+  max-width: calc(100vw - 24px);
+  transform: translateX(calc(100% + 24px));
+  visibility: hidden;
   background: #161b22;
   border-left: 1px solid #30363d;
   display: flex; flex-direction: column;
-  transition: right .35s cubic-bezier(.4,0,.2,1);
+  transition: transform .35s cubic-bezier(.4,0,.2,1), visibility .35s;
   z-index: 100;
   box-shadow: -8px 0 32px rgba(0,0,0,.5);
 }
-#detail-panel.open { right: 0; }
-#detail-header { padding: 20px 20px 12px; border-bottom: 1px solid #30363d; flex: 0 0 auto; }
+#detail-panel.open { transform: translateX(0); visibility: visible; }
+#detail-resize-handle {
+  position: absolute; left: -6px; top: 0; bottom: 0; width: 12px;
+  cursor: ew-resize; touch-action: none; z-index: 1;
+}
+#detail-resize-handle::after {
+  content: ''; position: absolute; left: 4px; top: 50%;
+  width: 4px; height: 48px; border-radius: 2px; background: #6e7681;
+  transform: translateY(-50%); transition: background .15s;
+}
+#detail-resize-handle:hover::after, #detail-resize-handle:focus-visible::after {
+  background: #79c0ff;
+}
+#detail-resize-handle:focus-visible { outline: 2px solid #79c0ff; outline-offset: -2px; }
+body.resizing-detail, body.resizing-detail * { cursor: ew-resize !important; user-select: none !important; }
+#detail-header { padding: 20px 44px 12px 20px; border-bottom: 1px solid #30363d; flex: 0 0 auto; }
 #detail-rank { font-size: 11px; color: #f0d080; letter-spacing: 1px; margin-bottom: 4px; }
 #detail-name-zh { font-size: 22px; font-weight: 700; }
 #detail-name-en { font-size: 14px; color: #8b949e; margin-top: 2px; }
@@ -221,7 +238,7 @@ body {
 #tooltip {
   position: fixed;
   background: #1e2840ee; border: 1px solid #30363d; border-radius: 8px;
-  padding: 8px 12px; pointer-events: none; font-size: 12px; line-height: 1.5;
+  padding: 8px 12px; pointer-events: auto; font-size: 12px; line-height: 1.5;
   z-index: 200; display: none; max-width: 200px;
 }
 #tooltip .tt-rank { color: #f0d080; font-size: 10px; }
@@ -319,6 +336,9 @@ body {
   position: relative; overflow: hidden; background: #0d1117;
   border: 1px solid #30363d;
 }
+button.person-portrait { padding: 0; color: inherit; font: inherit; }
+button.person-portrait:not(:disabled) { cursor: zoom-in; }
+button.person-portrait:focus-visible { outline: 2px solid #79c0ff; outline-offset: 2px; }
 .person-portrait img {
   position: relative; display: block; width: 100%; height: 100%; object-fit: cover;
 }
@@ -330,6 +350,25 @@ body {
   display: flex; gap: 14px; align-items: flex-start;
 }
 #detail-header-text { flex: 1 1 auto; min-width: 0; }
+#detail-name-zh, #detail-name-en { overflow-wrap: anywhere; }
+
+/* ── Full portrait ── */
+#portrait-dialog {
+  margin: auto; padding: 20px; border: 1px solid #30363d; border-radius: 12px;
+  background: #161b22; color: #e6edf3;
+  max-width: calc(100vw - 32px); max-height: calc(100dvh - 32px);
+}
+#portrait-dialog::backdrop { background: rgba(0,0,0,.8); }
+#portrait-dialog figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+#portrait-full-image { display: block; max-width: 100%; max-height: calc(100dvh - 120px); object-fit: contain; }
+#portrait-caption { padding: 0 32px; font-size: 14px; text-align: center; }
+#portrait-close {
+  position: absolute; top: 6px; right: 6px; padding: 6px 10px;
+  background: #21262d; border: 1px solid #30363d; border-radius: 6px;
+  color: #e6edf3; font-size: 18px; cursor: pointer;
+}
+#portrait-close:hover { background: #30363d; }
+#portrait-error { padding: 20px; color: #f0b86e; font-size: 13px; }
 
 /* ── Tag pills ── */
 .tag-pills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
@@ -360,7 +399,8 @@ body {
 #map-error { padding: 8px; color: #f0b86e; }
 .para-en, .para-zh { white-space: pre-wrap; }
 @media (max-width: 600px) {
-  #detail-panel { width: 100%; right: -100%; }
+  #detail-panel { width: 100%; max-width: none; }
+  #detail-resize-handle { display: none; }
 }
 </style>
 </head>
@@ -436,10 +476,11 @@ body {
 </div>
 
 <div id="detail-panel">
-  <button id="close-btn">✕</button>
+  <div id="detail-resize-handle" role="separator" tabindex="0" aria-label="调整正文宽度" aria-orientation="vertical" aria-controls="detail-panel" aria-valuemin="320" aria-valuemax="1200" aria-valuenow="400" title="左右拖动调整正文宽度，也可使用左右方向键"></div>
+  <button id="close-btn" type="button" aria-label="关闭正文">✕</button>
   <div id="detail-header">
     <div id="detail-header-top">
-      <div id="detail-portrait" class="person-portrait"></div>
+      <button id="detail-portrait" class="person-portrait" type="button" aria-label="查看人物头像大图" aria-haspopup="dialog" disabled></button>
       <div id="detail-header-text">
         <div id="detail-rank"></div>
         <div id="detail-name-zh"></div>
@@ -454,6 +495,15 @@ body {
 </div>
 
 <div id="tooltip"></div>
+
+<dialog id="portrait-dialog" aria-labelledby="portrait-caption">
+  <button id="portrait-close" type="button" aria-label="关闭大图" autofocus>✕</button>
+  <figure>
+    <img id="portrait-full-image" alt="" referrerpolicy="no-referrer">
+    <figcaption id="portrait-caption"></figcaption>
+  </figure>
+  <p id="portrait-error" role="alert" hidden>图片加载失败，请稍后重试。</p>
+</dialog>
 
 <script>
 // ═══════════════════════════════════════════════════════════
@@ -618,8 +668,34 @@ function dotR(d) {
   return 4.5;
 }
 
+// Bump after replacing same-URL portraits on our image host.
+const PORTRAIT_VERSION = '20261102';
+
+const portraitDialog = document.getElementById('portrait-dialog');
+const portraitFullImage = document.getElementById('portrait-full-image');
+function openPortrait(url, name) {
+  hideTip(true);
+  document.getElementById('portrait-error').hidden = true;
+  portraitFullImage.alt = `${name}头像`;
+  portraitFullImage.src = url;
+  document.getElementById('portrait-caption').textContent = name;
+  if (!portraitDialog.open) portraitDialog.showModal();
+}
+document.getElementById('portrait-close').addEventListener('click', () => portraitDialog.close());
+portraitDialog.addEventListener('click', e => {
+  if (e.target === portraitDialog) portraitDialog.close();
+});
+portraitFullImage.addEventListener('error', () => {
+  document.getElementById('portrait-error').hidden = false;
+});
+
 // Use the source note's img field, retaining initials while loading or on failure.
 function renderPortrait(container, person) {
+  const name = person.zh || person.en || '?';
+  container.disabled = true;
+  container.onclick = null;
+  container.title = '暂无可用头像';
+  container.setAttribute('aria-label', `查看${name}头像大图`);
   const color = REGIONS[person.region]?.color || '#8b949e';
   const fallback = document.createElement('span');
   fallback.className = 'avatar-fallback';
@@ -631,11 +707,20 @@ function renderPortrait(container, person) {
   let url;
   try { url = new URL(person.img); } catch { return; }
   if (!['https:', 'http:'].includes(url.protocol)) return;
+  if (url.origin === 'https://docs.suphy.top' && url.pathname.startsWith('/file/') && !url.searchParams.has('v')) {
+    url.searchParams.set('v', PORTRAIT_VERSION);
+  }
   const img = document.createElement('img');
-  img.alt = `${person.zh || person.en}头像`;
+  img.alt = `${name}头像`;
   img.decoding = 'async';
   img.referrerPolicy = 'no-referrer';
-  img.onload = () => fallback.remove();
+  img.onload = () => {
+    if (!container.contains(img)) return;
+    fallback.remove();
+    container.disabled = false;
+    container.title = '点击查看大图';
+    container.onclick = () => openPortrait(url.href, name);
+  };
   img.onerror = () => img.remove();
   img.src = url.href;
   container.append(img);
@@ -646,14 +731,23 @@ function renderPortrait(container, person) {
 // ═══════════════════════════════════════════════════════════
 
 const tooltip = document.getElementById('tooltip');
+let tooltipHideTimer;
+tooltip.addEventListener('mouseenter', () => clearTimeout(tooltipHideTimer));
+tooltip.addEventListener('mouseleave', () => hideTip());
+tooltip.addEventListener('focusin', () => clearTimeout(tooltipHideTimer));
+tooltip.addEventListener('focusout', e => {
+  if (!tooltip.contains(e.relatedTarget)) hideTip();
+});
 
 function showTooltip(evt, d) {
+  if (portraitDialog.open) return;
+  clearTimeout(tooltipHideTimer);
   const reg = REGIONS[d.region];
   const roleZh = (ROLE_LABELS && d.role) ? (ROLE_LABELS[d.role] || d.role) : '';
   const domainInfo = (DOMAIN_LABELS && d.domain) ? DOMAIN_LABELS[d.domain] : null;
   tooltip.innerHTML = `
     <div class="tt-header">
-      <div class="tt-portrait person-portrait"></div>
+      <button class="tt-portrait person-portrait" type="button" aria-haspopup="dialog" disabled></button>
       <div class="tt-info">
     <div class="tt-rank">排名 #${d.rank}</div>
     <div class="tt-zh">${d.zh}</div>
@@ -676,7 +770,11 @@ function moveTip(evt) {
   tooltip.style.left = Math.max(8, Math.min(left, window.innerWidth - width - 8)) + 'px';
   tooltip.style.top = Math.max(8, Math.min(y - 20, window.innerHeight - height - 8)) + 'px';
 }
-function hideTip() { tooltip.style.display = 'none'; }
+function hideTip(immediate = false) {
+  clearTimeout(tooltipHideTimer);
+  if (immediate === true) tooltip.style.display = 'none';
+  else tooltipHideTimer = setTimeout(() => { tooltip.style.display = 'none'; }, 160);
+}
 
 // ═══════════════════════════════════════════════════════════
 // ACTIVE / DETAIL
@@ -691,6 +789,7 @@ function setActive(rank) {
 }
 
 async function openDetail(p) {
+  hideTip(true);
   setActive(p.rank);
   const reg = REGIONS[p.region];
 
@@ -718,7 +817,6 @@ async function openDetail(p) {
   const body = document.getElementById('detail-body');
   body.innerHTML = '<div style="color:#8b949e;font-size:12px;padding:8px 0">载入中…</div>';
   document.getElementById('detail-panel').classList.add('open');
-  redrawMap();
 
   const text = typeof CONTENT !== 'undefined' ? CONTENT[p.rank] : null;
   const pairs = parseMD(text);
@@ -750,10 +848,55 @@ async function openDetail(p) {
 }
 
 function closeDetail() {
+  stopDetailResize();
   document.getElementById('detail-panel').classList.remove('open');
   setActive(null);
-  redrawMap();
 }
+
+// The panel overlays the map; resizing never changes the map projection.
+const detailPanel = document.getElementById('detail-panel');
+const detailResizeHandle = document.getElementById('detail-resize-handle');
+let detailWidth = 400;
+let detailResizeStart = null;
+function setDetailWidth(width = detailWidth) {
+  const max = window.innerWidth <= 600 ? window.innerWidth : window.innerWidth - 24;
+  const min = Math.min(320, max);
+  if (window.innerWidth > 600) {
+    detailWidth = Math.max(min, Math.min(max, width));
+    detailPanel.style.setProperty('--detail-width', `${detailWidth}px`);
+  }
+  detailResizeHandle.setAttribute('aria-valuemin', min);
+  detailResizeHandle.setAttribute('aria-valuemax', max);
+  detailResizeHandle.setAttribute('aria-valuenow', window.innerWidth <= 600 ? max : detailWidth);
+}
+function stopDetailResize(e) {
+  if (!detailResizeStart || (e && e.pointerId !== detailResizeStart.pointerId)) return;
+  const { pointerId } = detailResizeStart;
+  detailResizeStart = null;
+  document.body.classList.remove('resizing-detail');
+  if (detailResizeHandle.hasPointerCapture(pointerId)) detailResizeHandle.releasePointerCapture(pointerId);
+}
+detailResizeHandle.addEventListener('pointerdown', e => {
+  if (e.button !== 0 || !e.isPrimary || window.innerWidth <= 600) return;
+  e.preventDefault();
+  detailResizeStart = { pointerId: e.pointerId, x: e.clientX, width: detailPanel.getBoundingClientRect().width };
+  detailResizeHandle.setPointerCapture(e.pointerId);
+  document.body.classList.add('resizing-detail');
+});
+detailResizeHandle.addEventListener('pointermove', e => {
+  if (!detailResizeStart || e.pointerId !== detailResizeStart.pointerId) return;
+  setDetailWidth(detailResizeStart.width + detailResizeStart.x - e.clientX);
+});
+for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+  detailResizeHandle.addEventListener(event, stopDetailResize);
+}
+detailResizeHandle.addEventListener('keydown', e => {
+  const bounds = { Home: 320, End: window.innerWidth - 24, ArrowLeft: detailWidth + 40, ArrowRight: detailWidth - 40 };
+  if (!(e.key in bounds)) return;
+  e.preventDefault();
+  setDetailWidth(bounds[e.key]);
+});
+setDetailWidth();
 
 function parseMD(text) {
   if (!text) return null;
@@ -952,7 +1095,7 @@ function mapContentSize(scale) {
 }
 
 // Clamp pan so the map can't be dragged/scrolled past its own edges.
-// availW = horizontal space available to the map (viewport minus open panel).
+// Use the full map viewport, including the area covered by the detail panel.
 function clampPan(scale, availW, H) {
   const { mw, mh } = mapContentSize(scale);
   const overX = (mw - availW) / 2;
@@ -965,18 +1108,12 @@ function redrawMap() {
   if (!worldData || !projection) return;
   const { W, H } = getMapDims();
 
-  // Panel-aware layout: when the detail panel is open, the map fits into and
-  // centers within the remaining space to the left of the panel.
-  const panelEl = document.getElementById('detail-panel');
-  const panelOpen = panelEl && panelEl.classList.contains('open');
-  const availW = Math.max(1, W - (panelOpen && !window.matchMedia('(max-width: 600px)').matches ? document.getElementById('detail-panel').getBoundingClientRect().width : 0));
-
-  const baseScale = computeScale(fitMode, availW, H);
+  const baseScale = computeScale(fitMode, W, H);
   const zk = fitMode === 'auto' ? userZoom : 1;
   const scale = baseScale * zk;
 
-  clampPan(scale, availW, H);
-  const tx = availW / 2 + userPanX;
+  clampPan(scale, W, H);
+  const tx = W / 2 + userPanX;
   const ty = H / 2 + userPanY;
 
   projection.scale(scale).translate([tx, ty]);
@@ -1008,9 +1145,6 @@ function setupMapInteraction(svgEl) {
   svgEl.addEventListener('wheel', (e) => {
     e.preventDefault();
     const { W, H } = getMapDims();
-    const panelOpen = document.getElementById('detail-panel').classList.contains('open');
-    const availW = Math.max(1, W - (panelOpen && !window.matchMedia('(max-width: 600px)').matches ? document.getElementById('detail-panel').getBoundingClientRect().width : 0));
-
     if (fitMode === 'auto') {
       // Auto: wheel zooms toward the cursor (floor = original size).
       const delta = e.deltaY > 0 ? 0.88 : 1.14;
@@ -1020,7 +1154,7 @@ function setupMapInteraction(svgEl) {
       const rect = svgEl.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       const my = e.clientY - rect.top;
-      const cx = availW / 2, cy = H / 2;
+      const cx = W / 2, cy = H / 2;
       const ratio = newZ / userZoom;
       // Keep the geographic point under the cursor fixed.
       userPanX = mx - (mx - cx - userPanX) * ratio - cx;
@@ -1721,10 +1855,14 @@ async function loadMap() {
 }
 initControls();
 document.getElementById('map-retry').addEventListener('click', loadMap);
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDetail(); });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !portraitDialog.open) closeDetail();
+});
 loadMap();
 
 window.addEventListener('resize', () => {
+  stopDetailResize();
+  setDetailWidth();
   clearTimeout(window._resizeTL);
   window._resizeTL = setTimeout(() => renderTimeline(), 150);
 });
