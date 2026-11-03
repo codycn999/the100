@@ -34,11 +34,11 @@
 
 人物页中的 `birth`、`death`、`region`、`tags`、`img` 等字段用于本站展示。`tags` 使用源指南定义的 `role/领域/分类/身份` 层级；当前生成器使用第一个标签确定主要身份。
 
-头像裁切位置由本站的 `portrait-positions.js` 独立管理，以 THE100 排名为键。例如 `1: 25,` 表示第 1 位人物的头像位置为 25。这里的数值是本站展示属性，与源人物笔记无关；无需修改源笔记或重新生成 `data.js`。
+头像裁切位置是本站展示属性，与源人物笔记无关。启用 Cloudflare D1 后，`portrait_settings` 表按 THE100 排名保存原图 URL、0–100 的位置值和更新时间。数据库中的原图 URL 必须与当前人物图片一致，旧图片的裁切设置才不会误用于新图片。`portrait-positions.js` 保留为数据库不可用或该人物尚无记录时的静态后备值；未配置时默认为 50。
 
 竖图的 0/50/100 分别表示靠上/居中/靠下；横图分别表示靠左/居中/靠右。数值表示裁切框在可移动空间中的百分比，图片始终等比铺满正方形，正方形原图不受此值影响。无效或缺失值按 50 处理，超出范围的数值限制到 0–100，小数四舍五入。
 
-正文头像和大图弹窗提供“调整头像”入口，右键头像也可进入。可拖动、使用滑块或直接输入数值进行预览，并复制该人物的配置行。将配置行写入 `portrait-positions.js`，更新 `index.html` 中该脚本 URL 的 `v` 参数并部署后，对所有访客生效。预览不会写入项目文件或浏览器存储，也不修改已发布的数据。
+正文头像和大图弹窗提供“调整头像”入口，右键头像也可进入。管理员可拖动、使用滑块或直接输入数值预览，填写管理员密钥后保存到 D1。保存后当前页面立即更新；其他访客重新打开页面或返回标签页时读取最新记录，无需重新生成 `data.js` 或重新部署。页面只在当次请求中使用密钥，请求完成或弹窗关闭后清空输入框；站点代码不会将密钥写入项目文件或 localStorage。公开读取接口使用 `Cache-Control: no-store`；写入接口要求密钥，并校验排名、图片 URL 和位置范围。
 
 地区页通过 `type` 区分 `country`、`subregion`、`continent`，通过 `master` 链关联国家 → 子区 → 大洲；部分国家直接关联大洲。
 
@@ -48,7 +48,11 @@
 - `build-content.js`：按章节文件名中的编号读取 Markdown 原文，生成 `content.js`。
 - `enrich-data.js`：源笔记暂不可用时，将 `country-ref.js` 合并到已有 `data.js`，保留人物数据。
 - `role-colors.js`：独立维护身份颜色，不随数据重新生成而丢失。
-- `portrait-positions.js`：独立维护头像裁切位置，不随数据重新生成而丢失。
+- `portrait-positions.js`：数据库不可用时的头像裁切后备值，不随数据重新生成而丢失。
+
+### 头像位置数据库
+
+`functions/api/portrait-positions.js` 提供同源 `/api/portrait-positions`：GET 读取记录，PUT 写入一条记录。数据库表定义见 `migrations/0001_portrait_settings.sql`。线上启用需要先在 Cloudflare 创建 D1 数据库，执行建表 SQL，再在 Pages 项目的 `wrangler.toml` 中绑定为 `PORTRAIT_DB`，并在 Pages 的生产环境配置加密密钥 `PORTRAIT_ADMIN_TOKEN`（至少 32 个字符）。具体操作见 [README.md](README.md)。没有数据库或密钥时，写入接口拒绝请求，网站继续按静态后备值显示。
 
 `OUT_DATA`、`OUT_CONTENT` 可指定其他输出路径，便于比较结果后再替换。`build-data.js` 在少于 95 位人物解析出地区时会拒绝写入；先检查源笔记与匹配情况，不要直接用 `FORCE` 跳过保护。
 

@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
 const os = require('node:os');
+const { webcrypto } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const read = f => fs.readFileSync(path.join(__dirname, f), 'utf8');
 const html = read('index.html');
@@ -99,7 +100,7 @@ test('default reader width reserves map space; extra width overlays it', () => {
 });
 
 // Exercise portrait interactions without fetching external images.
-function portraitHarness(storage = new Map(), positions = {}) {
+function portraitHarness(storage = new Map(), positions = {}, fetchImpl) {
   class Element {
     constructor(id = '', className = '') {
       Object.assign(this, { id, className, style: {}, children: [], hidden: true, listeners: {}, open: false, naturalWidth: 400, naturalHeight: 600 });
@@ -152,6 +153,7 @@ function portraitHarness(storage = new Map(), positions = {}) {
   const context = vm.createContext({
     document, window, URL, REGIONS: {}, hideTip() {},
     PORTRAIT_POSITIONS: positions,
+    fetch: fetchImpl,
     navigator: { clipboard: { writeText: async text => clipboard.push(text) } },
     Date: { now: () => 1793664000000 },
     localStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) },
@@ -320,17 +322,17 @@ test('portrait positions normalize site values, preserving zero', () => {
   }
 });
 
-test('portrait position preview supports drag, direct input and copying without saving local overrides', async () => {
+test('portrait position preview supports drag and input without saving local overrides', async () => {
   const h = portraitHarness();
   h.run('renderPortrait(detail, person); openPortraitCrop(person)');
   const image = h.elements.get('portrait-crop-image');
   const preview = h.elements.get('portrait-crop-preview');
-  const copy = h.elements.get('portrait-crop-save');
+  const save = h.elements.get('portrait-crop-save');
   image.naturalWidth = 400;
   image.naturalHeight = 800;
-  assert.equal(copy.disabled, true);
+  assert.equal(save.disabled, true);
   image.onload();
-  assert.equal(copy.disabled, false);
+  assert.equal(save.disabled, false);
   assert.equal(image.style.objectPosition, '50% 50%');
   assert.equal(h.elements.get('portrait-crop-direction').textContent, '上 → 下');
   preview.emit('pointerdown', { button: 0, pointerId: 1, clientX: 10, clientY: 10, preventDefault() {} });
@@ -350,9 +352,8 @@ test('portrait position preview supports drag, direct input and copying without 
   value.value = '150';
   value.emit('input');
   assert.equal(image.style.objectPosition, '100% 100%');
-  assert.equal(h.elements.get('portrait-crop-field').value, '  1: 100,');
-  await copy.listeners.click[0]();
-  assert.deepEqual(h.clipboard, ['  1: 100,']);
+  await save.listeners.click[0]();
+  assert.equal(h.elements.get('portrait-crop-status').textContent, '请输入管理员密钥后保存。');
   assert.equal(h.run('person.img_position'), undefined, 'preview never changes source person data');
   assert.equal(h.storage.size, 0, 'no crop override is stored in this browser');
   h.elements.get('portrait-crop-reset').emit('click');
@@ -387,4 +388,82 @@ test('shared image position is used by every thumbnail and survives image refres
   assert.equal(image.style.objectPosition, '50% 50%');
   preview.emit('pointercancel', { pointerId: 1 });
   assert.equal(preview.hasPointerCapture(1), false);
+});
+
+test('database portrait API rejects unauthorized writes and returns saved rows without caching', async () => {
+  const source = read('functions/api/portrait-positions.js').replaceAll('export async function', 'async function');
+  const handlers = vm.runInNewContext(source + ';({ onRequestGet, onRequestPut })',
+    { Request, Response, URL, TextEncoder, crypto: webcrypto });
+  const rows = new Map();
+  const db = { prepare(sql) {
+    return {
+      bind(...values) { this.values = values; return this; },
+      async all() { return { results: [...rows.values()] }; },
+      async run() {
+        assert.match(sql, /ON CONFLICT\(rank\)/);
+        const [rank, image_url, position] = this.values;
+        rows.set(rank, { rank, image_url, position, updated_at: '2026-11-03 00:00:00' });
+      },
+      async first() { return rows.get(this.values[0]); },
+    };
+  } };
+  const secret = 'a'.repeat(40);
+  const env = { PORTRAIT_DB: db, PORTRAIT_ADMIN_TOKEN: secret };
+  const url = 'https://the100.example/api/portrait-positions';
+  const input = { rank: 1, image_url: 'https://example.com/a.jpg', position: 0 };
+  const put = (body, token = secret, headers = {}) => handlers.onRequestPut({ env,
+    request: new Request(url, { method: 'PUT', headers: {
+      'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...headers,
+    }, body: JSON.stringify(body) }),
+  });
+  assert.equal((await handlers.onRequestGet({ env: {} })).status, 503);
+  assert.equal((await put(input, 'wrong')).status, 401);
+  assert.equal((await put(input, secret, { Origin: 'https://other.example' })).status, 403);
+  assert.equal((await put({ ...input, position: 101 })).status, 400);
+  assert.equal(rows.size, 0);
+  const saved = await put(input);
+  assert.equal(saved.status, 200);
+  assert.equal((await saved.json()).record.position, 0);
+  const result = await handlers.onRequestGet({ env });
+  assert.equal(result.status, 200);
+  assert.equal(result.headers.get('Cache-Control'), 'no-store');
+  assert.deepEqual((await result.json()).records.map(row => row.position), [0]);
+  assert.equal((await put({ ...input, position: 100 })).status, 200);
+  assert.equal(rows.get(1).position, 100);
+});
+
+test('saving a crop updates displayed portraits and new page loads use the database record', async () => {
+  const records = [];
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url, options });
+    if (!options.method) return { ok: true, json: async () => ({ records: [...records] }) };
+    const record = JSON.parse(options.body);
+    records.splice(0, records.length, record);
+    return { ok: true, json: async () => ({ record }) };
+  };
+  const h = portraitHarness(new Map(), {}, fetchImpl);
+  h.run('renderPortrait(detail, person); renderPortrait(tip, person)');
+  h.detail.children.at(-1).onload();
+  h.tip.children.at(-1).onload();
+  await h.run('loadPortraitPositions()');
+  h.run('openPortraitCrop(person)');
+  const image = h.elements.get('portrait-crop-image');
+  image.onload();
+  const value = h.elements.get('portrait-crop-value');
+  value.value = '25';
+  value.emit('input');
+  h.elements.get('portrait-crop-token').value = 'admin-secret';
+  await h.elements.get('portrait-crop-save').listeners.click[0]();
+  assert.equal(calls.at(-1).options.method, 'PUT');
+  assert.equal(calls.at(-1).options.headers.Authorization, 'Bearer admin-secret');
+  assert.equal(records[0].image_url, h.run('person.img'));
+  assert.equal(h.detail.children.at(-1).style.objectPosition, '25% 25%');
+  assert.equal(h.tip.children.at(-1).style.objectPosition, '25% 25%');
+  assert.equal(h.elements.get('portrait-crop-token').value, '');
+  assert.equal(h.storage.size, 0);
+  const next = portraitHarness(new Map(), {}, fetchImpl);
+  await next.run('loadPortraitPositions()');
+  assert.equal(next.run('portraitPosition(person)'), 25);
+  assert.equal(next.run('portraitPosition({...person, img: "https://example.com/new.jpg"})'), 50);
 });

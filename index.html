@@ -408,7 +408,8 @@ button.person-portrait:focus-visible { outline: 2px solid #79c0ff; outline-offse
 #portrait-crop-position-label { display: flex; align-items: center; gap: 10px; margin: 14px 0 8px; font-size: 12px; }
 #portrait-crop-position { flex: 1; min-width: 0; accent-color: #79c0ff; }
 #portrait-crop-value { width: 56px; padding: 4px; background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 4px; }
-#portrait-crop-field { width: 100%; padding: 8px; margin-bottom: 4px; background: #0d1117; color: #79c0ff; border: 1px solid #30363d; border-radius: 4px; }
+#portrait-crop-admin { display: block; margin: 12px 0 4px; font-size: 12px; color: #8b949e; }
+#portrait-crop-token { display: block; width: 100%; margin-top: 4px; padding: 8px; background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 4px; }
 #portrait-crop-actions { display: flex; justify-content: flex-end; gap: 6px; }
 #portrait-crop-save { background: #1f6feb; color: #fff; }
 #portrait-crop-actions button:disabled { opacity: .45; cursor: default; }
@@ -564,7 +565,7 @@ button.person-portrait:focus-visible { outline: 2px solid #79c0ff; outline-offse
 
 <dialog id="portrait-crop-dialog" aria-labelledby="portrait-crop-title" aria-describedby="portrait-crop-help">
   <h2 id="portrait-crop-title">调整头像显示</h2>
-  <p id="portrait-crop-help">拖动图片或调整 0–100 的位置值。将下方配置写入本站的 portrait-positions.js 并发布后，对所有访客生效。</p>
+  <p id="portrait-crop-help">拖动图片或调整 0–100 的位置值。管理员保存后，其他访客重新打开页面即可看到。</p>
   <div id="portrait-crop-preview" tabindex="0" role="group" aria-label="正方形头像预览，可拖动图片或用方向键移动" aria-describedby="portrait-crop-help">
     <img id="portrait-crop-image" alt="" referrerpolicy="no-referrer" draggable="false" hidden>
   </div>
@@ -572,12 +573,14 @@ button.person-portrait:focus-visible { outline: 2px solid #79c0ff; outline-offse
     <input id="portrait-crop-position" type="range" min="0" max="100" step="1" value="50" disabled>
   </label>
   <label for="portrait-crop-value">位置值（%） <input id="portrait-crop-value" type="number" min="0" max="100" step="1" value="50" disabled></label>
-  <input id="portrait-crop-field" aria-label="本站头像位置配置" value="" readonly>
+  <label id="portrait-crop-admin" for="portrait-crop-token">管理员密钥
+    <input id="portrait-crop-token" type="password" autocomplete="off" spellcheck="false" placeholder="保存时填写，不在浏览器中留存">
+  </label>
   <p id="portrait-crop-status" role="status">加载中…</p>
   <div id="portrait-crop-actions">
     <button id="portrait-crop-reset" class="portrait-refresh" type="button" disabled>居中</button>
     <button id="portrait-crop-cancel" class="portrait-refresh" type="button">关闭</button>
-    <button id="portrait-crop-save" class="portrait-refresh" type="button" disabled>复制配置</button>
+    <button id="portrait-crop-save" class="portrait-refresh" type="button" disabled>保存到全站</button>
   </div>
 </dialog>
 
@@ -768,6 +771,8 @@ try {
 } catch { /* Refresh still works when storage is unavailable. */ }
 let portraitRefreshCount = 0;
 const portraitPeople = new WeakMap();
+const portraitRecords = new Map();
+let portraitSettingsRevision = 0;
 
 function canRefreshPortrait(url) {
   return url.origin === 'https://docs.suphy.top' && url.pathname.startsWith('/file/');
@@ -952,11 +957,40 @@ function normalizePortraitPosition(value) {
   return Number.isFinite(number) ? Math.max(0, Math.min(100, Math.round(number))) : 50;
 }
 function portraitPosition(person) {
-  return normalizePortraitPosition(person && PORTRAIT_POSITIONS[person.rank]);
+  if (!person) return 50;
+  const record = portraitRecords.get(person.rank);
+  return normalizePortraitPosition(record?.image_url === person.img
+    ? record.position : PORTRAIT_POSITIONS[person.rank]);
 }
 function applyPortraitPosition(img, value) {
   const position = normalizePortraitPosition(value);
   img.style.objectPosition = `${position}% ${position}%`;
+}
+function updateDisplayedPortraitPositions() {
+  document.querySelectorAll('.person-portrait').forEach(container => {
+    const person = portraitPeople.get(container);
+    const img = container.querySelector('img');
+    if (person && img) applyPortraitPosition(img, portraitPosition(person));
+  });
+}
+async function loadPortraitPositions() {
+  const revision = ++portraitSettingsRevision;
+  try {
+    const response = await fetch('/api/portrait-positions', { cache: 'no-store' });
+    if (!response.ok) return;
+    const body = await response.json();
+    if (!Array.isArray(body.records) || revision !== portraitSettingsRevision) return;
+    portraitRecords.clear();
+    for (const record of body.records) {
+      if (Number.isInteger(record.rank) && record.rank >= 1 && record.rank <= 100 &&
+          typeof record.image_url === 'string') portraitRecords.set(record.rank, record);
+    }
+    updateDisplayedPortraitPositions();
+    if (portraitCropState?.ready && !portraitCropState.dirty && !portraitCropState.saving) {
+      portraitCropState.position = portraitPosition(portraitCropState.person);
+      paintPortraitCrop();
+    }
+  } catch { /* Keep the site-owned fallback positions when the API is unavailable. */ }
 }
 
 const portraitCropDialog = document.getElementById('portrait-crop-dialog');
@@ -967,13 +1001,13 @@ const portraitCropValue = document.getElementById('portrait-crop-value');
 const portraitCropSave = document.getElementById('portrait-crop-save');
 const portraitCropReset = document.getElementById('portrait-crop-reset');
 const portraitCropStatus = document.getElementById('portrait-crop-status');
+const portraitCropToken = document.getElementById('portrait-crop-token');
 let portraitCropState = null;
 let portraitCropDrag = null;
 function paintPortraitCrop() {
   if (!portraitCropState) return;
   const position = portraitCropState.position;
   portraitCropPosition.value = portraitCropValue.value = position;
-  document.getElementById('portrait-crop-field').value = `  ${portraitCropState.person.rank}: ${position},`;
   applyPortraitPosition(portraitCropImage, position);
 }
 function openPortraitCrop(person) {
@@ -981,8 +1015,9 @@ function openPortraitCrop(person) {
   if (!url) return;
   hideTip(true);
   closePortraitMenu();
-  const state = { person, position: portraitPosition(person), ready: false };
+  const state = { person, position: portraitPosition(person), ready: false, dirty: false, saving: false };
   portraitCropState = state;
+  portraitCropToken.value = '';
   document.getElementById('portrait-crop-title').textContent = `调整${person.zh || person.en || '人物'}头像`;
   portraitCropSave.disabled = portraitCropReset.disabled = portraitCropPosition.disabled = portraitCropValue.disabled = true;
   portraitCropImage.hidden = true;
@@ -1018,7 +1053,7 @@ function stopPortraitCropDrag(e) {
   if (portraitCropPreview.hasPointerCapture(pointerId)) portraitCropPreview.releasePointerCapture(pointerId);
 }
 portraitCropPreview.addEventListener('pointerdown', e => {
-  if (!portraitCropState?.ready || e.button !== 0 || e.isPrimary === false) return;
+  if (!portraitCropState?.ready || portraitCropState.saving || e.button !== 0 || e.isPrimary === false) return;
   e.preventDefault();
   portraitCropPreview.focus();
   const size = portraitCropPreview.getBoundingClientRect().width;
@@ -1032,52 +1067,87 @@ portraitCropPreview.addEventListener('pointerdown', e => {
 });
 portraitCropPreview.addEventListener('pointermove', e => {
   const drag = portraitCropDrag;
-  if (!drag || !portraitCropState?.ready || drag.pointerId !== e.pointerId || drag.overflow <= 0) return;
+  if (!drag || !portraitCropState?.ready || portraitCropState.saving || drag.pointerId !== e.pointerId || drag.overflow <= 0) return;
   const delta = (drag.horizontal ? e.clientX : e.clientY) - drag.start;
   portraitCropState.position = normalizePortraitPosition(drag.position - delta / drag.overflow * 100);
+  portraitCropState.dirty = true;
   paintPortraitCrop();
 });
 for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) portraitCropPreview.addEventListener(event, stopPortraitCropDrag);
 portraitCropPreview.addEventListener('keydown', e => {
-  if (!portraitCropState?.ready) return;
+  if (!portraitCropState?.ready || portraitCropState.saving) return;
   const keys = portraitCropImage.naturalWidth > portraitCropImage.naturalHeight ? ['ArrowRight', 'ArrowLeft'] : ['ArrowDown', 'ArrowUp'];
   if (!keys.includes(e.key)) return;
   e.preventDefault();
   portraitCropState.position = normalizePortraitPosition(portraitCropState.position + (e.key === keys[0] ? -1 : 1) * (e.shiftKey ? 10 : 1));
+  portraitCropState.dirty = true;
   paintPortraitCrop();
 });
 for (const control of [portraitCropPosition, portraitCropValue]) {
   control.addEventListener('input', () => {
-    if (!portraitCropState?.ready) return;
+    if (!portraitCropState?.ready || portraitCropState.saving) return;
     stopPortraitCropDrag();
     portraitCropState.position = normalizePortraitPosition(control.value);
+    portraitCropState.dirty = true;
     paintPortraitCrop();
   });
 }
 portraitCropReset.addEventListener('click', () => {
-  if (!portraitCropState?.ready) return;
+  if (!portraitCropState?.ready || portraitCropState.saving) return;
   stopPortraitCropDrag();
   portraitCropState.position = 50;
+  portraitCropState.dirty = true;
   paintPortraitCrop();
 });
 portraitCropSave.addEventListener('click', async () => {
-  if (!portraitCropState?.ready) return;
+  if (!portraitCropState?.ready || portraitCropState.saving) return;
   const state = portraitCropState;
-  const field = document.getElementById('portrait-crop-field');
+  const token = portraitCropToken.value.trim();
+  if (!token) {
+    portraitCropStatus.textContent = '请输入管理员密钥后保存。';
+    portraitCropToken.focus();
+    return;
+  }
+  state.saving = true;
+  stopPortraitCropDrag();
+  portraitCropSave.disabled = portraitCropReset.disabled = portraitCropPosition.disabled = portraitCropValue.disabled = true;
+  portraitCropStatus.textContent = '正在保存…';
   try {
-    await navigator.clipboard.writeText(field.value);
-    if (portraitCropState === state) portraitCropStatus.textContent = '配置已复制。写入本站的 portrait-positions.js，更新其版本号并发布后，全站生效。';
+    const { person, position } = state;
+    const response = await fetch('/api/portrait-positions', {
+      method: 'PUT', cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ rank: person.rank, image_url: person.img, position }),
+    });
+    if (!response.ok) {
+      if (portraitCropState === state) portraitCropStatus.textContent = response.status === 401
+        ? '管理员密钥不正确。' : response.status === 503
+          ? '在线保存尚未配置或数据库暂时不可用。' : '保存失败，请稍后重试。';
+      return;
+    }
+    const { record } = await response.json();
+    if (record?.rank !== person.rank || record?.image_url !== person.img || record?.position !== position)
+      throw new Error('Invalid save response');
+    ++portraitSettingsRevision;
+    portraitRecords.set(person.rank, record);
+    updateDisplayedPortraitPositions();
+    state.dirty = false;
+    if (portraitCropState === state) portraitCropStatus.textContent = '已保存。其他访客重新打开页面后即可看到。';
   } catch {
-    if (portraitCropState !== state) return;
-    field.focus();
-    field.select();
-    portraitCropStatus.textContent = '请复制已选中的配置，写入本站的 portrait-positions.js 后发布。';
+    if (portraitCropState === state) portraitCropStatus.textContent = '保存失败，请检查网络后重试。';
+  } finally {
+    state.saving = false;
+    if (portraitCropState === state) {
+      portraitCropToken.value = '';
+      portraitCropSave.disabled = portraitCropReset.disabled = portraitCropPosition.disabled = portraitCropValue.disabled = false;
+    }
   }
 });
 document.getElementById('portrait-crop-cancel').addEventListener('click', () => portraitCropDialog.close());
 portraitCropDialog.addEventListener('close', () => {
   stopPortraitCropDrag();
   portraitCropState = null;
+  portraitCropToken.value = '';
   portraitCropImage.onload = portraitCropImage.onerror = null;
   portraitCropImage.removeAttribute('src');
 });
@@ -2238,6 +2308,10 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && !portraitDialog.open && !portraitCropDialog.open) closeDetail();
 });
 loadMap();
+loadPortraitPositions();
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) loadPortraitPositions();
+});
 
 window.addEventListener('resize', () => {
   stopDetailResize();
