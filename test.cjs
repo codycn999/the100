@@ -87,3 +87,151 @@ test('default reader width reserves map space; extra width overlays it', () => {
   context.window.matchMedia = () => ({ matches: true });
   assert.deepEqual(rendered(), [['scale', 159], ['translate', [600, 250]]]);
 });
+
+// Exercise portrait interactions without fetching external images.
+function portraitHarness(storage = new Map()) {
+  class Element {
+    constructor(id = '', className = '') {
+      Object.assign(this, { id, className, style: {}, children: [], hidden: true, listeners: {}, open: false });
+    }
+    addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); }
+    emit(type, event = {}) { for (const handler of this.listeners[type] || []) handler(event); }
+    setAttribute(key, value) { this[key] = value; }
+    append(child) { child.remove(); this.children.push(child); child.parent = this; }
+    remove() {
+      if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this);
+      this.parent = null;
+    }
+    replaceChildren(...children) { for (const child of [...this.children]) child.remove(); children.forEach(child => this.append(child)); }
+    contains(child) { return child === this || this.children.some(node => node.contains(child)); }
+    closest(selector) {
+      if (selector === '.person-portrait' && this.className.split(' ').includes('person-portrait')) return this;
+      return this.parent?.closest(selector) || null;
+    }
+    getBoundingClientRect() { return { left: 10, bottom: 90, width: 140, height: 40 }; }
+    focus() { document.activeElement = this; }
+    get isConnected() { return document.body.contains(this); }
+    showModal() { this.open = true; }
+    close() { this.open = false; this.emit('close'); }
+  }
+  const elements = new Map([...html.matchAll(/id="([^"]+)"/g)].map(match => [match[1], new Element(match[1])]));
+  const detail = elements.get('detail-portrait');
+  detail.className = 'person-portrait';
+  const tip = new Element('', 'person-portrait');
+  const other = new Element('', 'person-portrait');
+  const document = new Element();
+  document.body = new Element();
+  document.getElementById = id => elements.get(id);
+  document.createElement = () => new Element();
+  document.querySelectorAll = () => [detail, tip, other];
+  for (const element of [...elements.values(), tip, other]) document.body.append(element);
+  elements.get('portrait-menu').append(elements.get('portrait-menu-refresh'));
+  const window = new Element();
+  window.innerWidth = 1000;
+  window.innerHeight = 700;
+  const context = vm.createContext({
+    document, window, URL, REGIONS: {}, hideTip() {},
+    Date: { now: () => 1793664000000 },
+    localStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) },
+    person: { zh: '测试人物', img: 'https://docs.suphy.top/file/test.jpg?size=small&v=source#portrait' },
+    another: { zh: '另一人物', img: 'https://docs.suphy.top/file/another.jpg' },
+    detail, tip, other,
+  });
+  const portraitCode = code.slice(code.indexOf('// Bump after replacing same-URL portraits'), code.indexOf('// TOOLTIP'));
+  vm.runInContext(portraitCode, context);
+  return { run: source => vm.runInContext(source, context), document, elements, detail, tip, other, storage };
+}
+
+test('manual refresh changes only the selected image and keeps unrelated URL parameters', () => {
+  const h = portraitHarness();
+  assert.equal(h.run('getPortraitURL(person).searchParams.get("v")'), 'source');
+  assert.equal(h.run('getPortraitURL(another).searchParams.get("v")'), '20261102');
+  const original = h.run('person.img');
+  h.run('refreshPortrait(person)');
+  const first = h.run('getPortraitURL(person).href');
+  const url = new URL(first);
+  assert.notEqual(url.searchParams.get('v'), 'source');
+  assert.equal(url.searchParams.get('size'), 'small');
+  assert.equal(url.hash, '#portrait');
+  assert.equal(h.run('person.img'), original);
+  assert.equal(h.run('getPortraitURL(another).searchParams.get("v")'), '20261102');
+  h.run('refreshPortrait(person)');
+  assert.notEqual(h.run('getPortraitURL(person).href'), first, 'successive clicks create different versions');
+  h.run('person = { img: "https://upload.wikimedia.org/a.jpg?v=keep" }; refreshPortrait(person)');
+  assert.equal(h.run('getPortraitURL(person).href'), 'https://upload.wikimedia.org/a.jpg?v=keep');
+  assert.equal(h.run('getPortraitURL({img: "javascript:alert(1)"})'), null);
+});
+
+test('refresh synchronizes thumbnails and the open full image, and failed thumbnails can retry', () => {
+  const h = portraitHarness();
+  h.run('renderPortrait(detail, person); renderPortrait(tip, person); renderPortrait(other, another); openPortrait(person)');
+  const oldImage = h.detail.children.at(-1);
+  const otherURL = h.other.children.at(-1).src;
+  h.elements.get('portrait-refresh').emit('click');
+  const detailImage = h.detail.children.at(-1);
+  assert.notEqual(detailImage.src, oldImage.src);
+  assert.equal(detailImage.src, h.tip.children.at(-1).src);
+  assert.equal(detailImage.src, h.elements.get('portrait-full-image').src);
+  assert.equal(h.other.children.at(-1).src, otherURL);
+  oldImage.onload();
+  assert.equal(h.detail.disabled, true, 'late results cannot enable a replaced thumbnail');
+  detailImage.onerror();
+  assert.equal(h.detail.children.length, 1, 'initial remains after a load failure');
+  assert.equal(h.elements.get('detail-portrait-refresh').hidden, false);
+  h.elements.get('detail-portrait-refresh').emit('click');
+  const retried = h.detail.children.at(-1);
+  assert.notEqual(retried.src, detailImage.src);
+  retried.onload();
+  assert.equal(h.detail.disabled, false);
+  h.detail.onclick();
+  assert.equal(h.elements.get('portrait-full-image').src, retried.src);
+  h.elements.get('portrait-full-image').emit('error');
+  assert.equal(h.elements.get('portrait-error').hidden, false);
+  h.elements.get('portrait-refresh').emit('click');
+  assert.equal(h.elements.get('portrait-error').hidden, true);
+  assert.equal(h.elements.get('portrait-status').textContent, '加载中…');
+  h.elements.get('portrait-full-image').emit('load');
+  assert.equal(h.elements.get('portrait-status').textContent, '');
+  h.run('renderPortrait(detail, {img: null})');
+  assert.equal(h.elements.get('detail-portrait-refresh').hidden, true);
+});
+
+test('manual versions survive page reloads but storage errors do not prevent refresh', () => {
+  const storage = new Map();
+  const h = portraitHarness(storage);
+  h.run('refreshPortrait(person)');
+  const refreshed = h.run('getPortraitURL(person).href');
+  assert.equal(portraitHarness(storage).run('getPortraitURL(person).href'), refreshed);
+  const blocked = portraitHarness({ get() { throw new Error('blocked'); }, set() { throw new Error('blocked'); } });
+  blocked.run('refreshPortrait(person)');
+  assert.notEqual(blocked.run('getPortraitURL(person).searchParams.get("v")'), 'source');
+  for (const malformed of ['null', '{broken']) {
+    const fresh = portraitHarness(new Map([['the100:portrait-refresh:20261102', malformed]]));
+    assert.equal(fresh.run('getPortraitURL(person).searchParams.get("v")'), 'source');
+  }
+});
+
+test('portrait context menu refreshes one image and Escape dismisses only the menu', () => {
+  const h = portraitHarness();
+  h.run('renderPortrait(detail, person)');
+  h.detail.children.at(-1).onload();
+  let prevented = false;
+  h.document.emit('contextmenu', { target: h.detail, clientX: 990, clientY: 690, preventDefault() { prevented = true; } });
+  assert.equal(prevented, true);
+  const menu = h.elements.get('portrait-menu');
+  assert.equal(menu.hidden, false);
+  assert.equal(menu.style.left, '856px');
+  assert.equal(menu.style.top, '656px');
+  h.elements.get('portrait-menu-refresh').emit('click');
+  assert.equal(menu.hidden, true);
+  assert.notEqual(new URL(h.detail.children.at(-1).src).searchParams.get('v'), 'source');
+  h.run('openPortrait(person)');
+  h.document.emit('contextmenu', { target: h.elements.get('portrait-full-image'), clientX: 10, clientY: 10, preventDefault() {} });
+  assert.equal(menu.parent, h.elements.get('portrait-dialog'), 'menu remains above the modal');
+  let stopped = false;
+  h.document.emit('keydown', { key: 'Escape', preventDefault() {}, stopImmediatePropagation() { stopped = true; } });
+  assert.equal(stopped, true);
+  assert.equal(menu.hidden, true);
+  assert.equal(h.elements.get('portrait-dialog').open, true);
+  assert.equal(h.document.activeElement, h.elements.get('portrait-refresh'));
+});

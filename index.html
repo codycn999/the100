@@ -332,6 +332,19 @@ body.resizing-detail, body.resizing-detail * { cursor: ew-resize !important; use
   width: 80px; height: 80px; border-radius: 8px;
   flex: 0 0 80px;
 }
+.detail-portrait-tools { display: flex; flex: 0 0 80px; flex-direction: column; align-items: center; gap: 4px; }
+.portrait-refresh {
+  padding: 4px 6px; border: 0; border-radius: 4px; background: transparent;
+  color: #8b949e; font: inherit; font-size: 12px; cursor: pointer;
+}
+.portrait-refresh:hover { color: #e6edf3; background: #21262d; }
+.portrait-refresh:focus-visible { outline: 2px solid #79c0ff; outline-offset: 2px; }
+.portrait-refresh[hidden] { display: none; }
+#portrait-menu {
+  position: fixed; z-index: 300; padding: 4px; border: 1px solid #30363d;
+  border-radius: 6px; background: #161b22; box-shadow: 0 4px 16px #0008;
+}
+#portrait-menu button { display: block; width: 100%; text-align: left; color: #e6edf3; }
 .person-portrait {
   position: relative; overflow: hidden; background: #0d1117;
   border: 1px solid #30363d;
@@ -369,6 +382,8 @@ button.person-portrait:focus-visible { outline: 2px solid #79c0ff; outline-offse
 }
 #portrait-close:hover { background: #30363d; }
 #portrait-error { padding: 20px; color: #f0b86e; font-size: 13px; }
+#portrait-actions { display: flex; justify-content: center; align-items: center; gap: 8px; margin-top: 8px; }
+#portrait-status { color: #8b949e; font-size: 12px; }
 
 /* ── Tag pills ── */
 .tag-pills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
@@ -480,7 +495,10 @@ button.person-portrait:focus-visible { outline: 2px solid #79c0ff; outline-offse
   <button id="close-btn" type="button" aria-label="关闭正文">✕</button>
   <div id="detail-header">
     <div id="detail-header-top">
-      <button id="detail-portrait" class="person-portrait" type="button" aria-label="查看人物头像大图" aria-haspopup="dialog" disabled></button>
+      <div class="detail-portrait-tools">
+        <button id="detail-portrait" class="person-portrait" type="button" aria-label="查看人物头像大图" aria-haspopup="dialog" disabled></button>
+        <button id="detail-portrait-refresh" class="portrait-refresh" type="button" title="重新获取此头像" hidden>↻ 刷新头像</button>
+      </div>
       <div id="detail-header-text">
         <div id="detail-rank"></div>
         <div id="detail-name-zh"></div>
@@ -496,12 +514,20 @@ button.person-portrait:focus-visible { outline: 2px solid #79c0ff; outline-offse
 
 <div id="tooltip"></div>
 
+<div id="portrait-menu" role="menu" aria-label="头像操作" hidden>
+  <button id="portrait-menu-refresh" class="portrait-refresh" type="button" role="menuitem">↻ 刷新此头像</button>
+</div>
+
 <dialog id="portrait-dialog" aria-labelledby="portrait-caption">
   <button id="portrait-close" type="button" aria-label="关闭大图" autofocus>✕</button>
   <figure>
     <img id="portrait-full-image" alt="" referrerpolicy="no-referrer">
     <figcaption id="portrait-caption"></figcaption>
   </figure>
+  <div id="portrait-actions">
+    <button id="portrait-refresh" class="portrait-refresh" type="button" hidden>↻ 刷新头像</button>
+    <span id="portrait-status" role="status"></span>
+  </div>
   <p id="portrait-error" role="alert" hidden>图片加载失败，请稍后重试。</p>
 </dialog>
 
@@ -582,12 +608,19 @@ for (const contKey of Object.keys(CONTINENTS)) {
   if (!SUB_TO_CONT[contKey]) SUB_TO_CONT[contKey] = contKey;
 }
 
-// Resolve a region color for a subregion/continent key, staying within the
-// region's own color family. COUNTRIES + REGIONS in data.js are complete, so
-// every selectable region has a color here.
+// Extend the existing palette to countries whose subregions have no color
+// bucket in data.js. Keep each addition in its continent's current color family.
+const REGION_COLOR_ADDITIONS = {
+  '亚洲': '#e8a838', '中亚': '#d39348', '东南亚': '#cf7845',
+  '欧洲': '#4a90d9',
+  '非洲': '#a0522d', '西非': '#b46b36', '中非': '#925c37', '东非': '#bd8448', '南部非洲': '#8c633d',
+  '北美洲': '#b8569e', '拉丁美洲': '#d77fb0',
+  '大洋洲': '#27ae60', '美拉尼西亚': '#35ad7c', '密克罗尼西亚': '#5abe8a', '波利尼西亚': '#279b6b',
+};
+
 function regionColor(sr, ct) {
-  const reg = REGIONS[sr] || REGIONS[ct];
-  return reg ? reg.color : '#4a90d9';
+  return REGION_COLOR_ADDITIONS[sr] || REGIONS[sr]?.color
+    || REGION_COLOR_ADDITIONS[ct] || REGIONS[ct]?.color || '#4a90d9';
 }
 
 // Mix a hex color toward white (positive amount) or black (negative) to
@@ -670,32 +703,148 @@ function dotR(d) {
 
 // Bump after replacing same-URL portraits on our image host.
 const PORTRAIT_VERSION = '20261102';
+const PORTRAIT_STORAGE_KEY = `the100:portrait-refresh:${PORTRAIT_VERSION}`;
+const portraitVersions = new Map();
+try {
+  const saved = JSON.parse(localStorage.getItem(PORTRAIT_STORAGE_KEY) || '{}');
+  for (const [url, version] of Object.entries(saved)) {
+    if (typeof version === 'string' && /^[a-z0-9-]{1,80}$/i.test(version)) portraitVersions.set(url, version);
+  }
+} catch { /* Refresh still works when storage is unavailable. */ }
+let portraitRefreshCount = 0;
+const portraitPeople = new WeakMap();
+
+function canRefreshPortrait(url) {
+  return url.origin === 'https://docs.suphy.top' && url.pathname.startsWith('/file/');
+}
+function getPortraitURL(person) {
+  let url;
+  try { url = new URL(person.img); } catch { return null; }
+  if (!['https:', 'http:'].includes(url.protocol)) return null;
+  if (canRefreshPortrait(url)) {
+    const version = portraitVersions.get(person.img);
+    if (version) url.searchParams.set('v', version);
+    else if (!url.searchParams.has('v')) url.searchParams.set('v', PORTRAIT_VERSION);
+  }
+  return url;
+}
+function refreshPortrait(person) {
+  if (!person) return;
+  const url = getPortraitURL(person);
+  if (!url || !canRefreshPortrait(url)) return;
+  const version = `manual-${Date.now().toString(36)}-${++portraitRefreshCount}-${Math.random().toString(36).slice(2, 10)}`;
+  portraitVersions.set(person.img, version);
+  try {
+    localStorage.setItem(PORTRAIT_STORAGE_KEY, JSON.stringify(Object.fromEntries(portraitVersions)));
+  } catch { /* Keep the new version for this page even if storage is full or blocked. */ }
+  document.querySelectorAll('.person-portrait').forEach(container => {
+    const displayed = portraitPeople.get(container);
+    if (displayed?.img === person.img) renderPortrait(container, displayed);
+  });
+  if (portraitDialog.open && currentPortrait?.img === person.img) loadFullPortrait(currentPortrait);
+}
 
 const portraitDialog = document.getElementById('portrait-dialog');
 const portraitFullImage = document.getElementById('portrait-full-image');
-function openPortrait(url, name) {
-  hideTip(true);
+const portraitStatus = document.getElementById('portrait-status');
+let currentPortrait = null;
+function loadFullPortrait(person) {
+  const url = getPortraitURL(person);
+  if (!url) return;
+  currentPortrait = person;
+  const name = person.zh || person.en || '?';
   document.getElementById('portrait-error').hidden = true;
+  document.getElementById('portrait-refresh').hidden = !canRefreshPortrait(url);
+  portraitStatus.textContent = '加载中…';
   portraitFullImage.alt = `${name}头像`;
-  portraitFullImage.src = url;
+  portraitFullImage.src = url.href;
   document.getElementById('portrait-caption').textContent = name;
+}
+function openPortrait(person) {
+  hideTip(true);
+  closePortraitMenu();
+  loadFullPortrait(person);
   if (!portraitDialog.open) portraitDialog.showModal();
 }
+document.getElementById('portrait-refresh').addEventListener('click', () => refreshPortrait(currentPortrait));
+document.getElementById('detail-portrait-refresh').addEventListener('click', () => {
+  refreshPortrait(portraitPeople.get(document.getElementById('detail-portrait')));
+});
 document.getElementById('portrait-close').addEventListener('click', () => portraitDialog.close());
 portraitDialog.addEventListener('click', e => {
   if (e.target === portraitDialog) portraitDialog.close();
 });
+portraitDialog.addEventListener('close', () => { closePortraitMenu(); currentPortrait = null; });
+portraitFullImage.addEventListener('load', () => { portraitStatus.textContent = ''; });
 portraitFullImage.addEventListener('error', () => {
+  portraitStatus.textContent = '';
   document.getElementById('portrait-error').hidden = false;
 });
 
+const portraitMenu = document.getElementById('portrait-menu');
+const portraitMenuRefresh = document.getElementById('portrait-menu-refresh');
+let portraitMenuTarget = null;
+let portraitMenuPerson = null;
+function closePortraitMenu(restoreFocus = false) {
+  portraitMenu.hidden = true;
+  if (restoreFocus && portraitMenuTarget?.isConnected) portraitMenuTarget.focus();
+  portraitMenuTarget = null;
+  portraitMenuPerson = null;
+}
+document.addEventListener('contextmenu', e => {
+  const container = e.target.closest('.person-portrait');
+  const person = container ? portraitPeople.get(container) : e.target === portraitFullImage ? currentPortrait : null;
+  const url = person && getPortraitURL(person);
+  if (!url || !canRefreshPortrait(url)) { closePortraitMenu(); return; }
+  e.preventDefault();
+  portraitMenuTarget = container || document.getElementById('portrait-refresh');
+  portraitMenuPerson = person;
+  // Keep the menu in the dialog's top layer while viewing a full portrait.
+  (portraitDialog.open ? portraitDialog : document.body).append(portraitMenu);
+  portraitMenu.hidden = false;
+  const bounds = portraitMenuTarget.getBoundingClientRect();
+  const rect = portraitMenu.getBoundingClientRect();
+  const x = e.clientX || bounds.left;
+  const y = e.clientY || bounds.bottom;
+  portraitMenu.style.left = Math.max(4, Math.min(x, window.innerWidth - rect.width - 4)) + 'px';
+  portraitMenu.style.top = Math.max(4, Math.min(y, window.innerHeight - rect.height - 4)) + 'px';
+  portraitMenuRefresh.focus();
+});
+portraitMenuRefresh.addEventListener('click', () => {
+  const person = portraitMenuPerson;
+  closePortraitMenu(true);
+  refreshPortrait(person);
+});
+document.addEventListener('pointerdown', e => {
+  if (!portraitMenu.contains(e.target)) closePortraitMenu();
+});
+document.addEventListener('keydown', e => {
+  if (portraitMenu.hidden) return;
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    closePortraitMenu(true);
+  } else if (e.key === 'Tab') closePortraitMenu(true);
+  else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+    e.preventDefault();
+    portraitMenuRefresh.focus();
+  }
+});
+window.addEventListener('resize', () => closePortraitMenu());
+document.addEventListener('scroll', () => closePortraitMenu(), true);
+
 // Use the source note's img field, retaining initials while loading or on failure.
 function renderPortrait(container, person) {
+  portraitPeople.set(container, person);
   const name = person.zh || person.en || '?';
   container.disabled = true;
   container.onclick = null;
   container.title = '暂无可用头像';
   container.setAttribute('aria-label', `查看${name}头像大图`);
+  const url = getPortraitURL(person);
+  if (container.id === 'detail-portrait') {
+    document.getElementById('detail-portrait-refresh').hidden = !url || !canRefreshPortrait(url);
+  }
   const color = REGIONS[person.region]?.color || '#8b949e';
   const fallback = document.createElement('span');
   fallback.className = 'avatar-fallback';
@@ -703,13 +852,8 @@ function renderPortrait(container, person) {
   fallback.style.background = color + '22';
   fallback.style.color = color;
   container.replaceChildren(fallback);
-  if (!person.img) return;
-  let url;
-  try { url = new URL(person.img); } catch { return; }
-  if (!['https:', 'http:'].includes(url.protocol)) return;
-  if (url.origin === 'https://docs.suphy.top' && url.pathname.startsWith('/file/') && !url.searchParams.has('v')) {
-    url.searchParams.set('v', PORTRAIT_VERSION);
-  }
+  if (!url) return;
+  container.title = '头像加载中…';
   const img = document.createElement('img');
   img.alt = `${name}头像`;
   img.decoding = 'async';
@@ -718,10 +862,14 @@ function renderPortrait(container, person) {
     if (!container.contains(img)) return;
     fallback.remove();
     container.disabled = false;
-    container.title = '点击查看大图';
-    container.onclick = () => openPortrait(url.href, name);
+    container.title = canRefreshPortrait(url) ? '点击查看大图；右键可刷新头像' : '点击查看大图';
+    container.onclick = () => openPortrait(person);
   };
-  img.onerror = () => img.remove();
+  img.onerror = () => {
+    if (!container.contains(img)) return;
+    container.title = '头像加载失败';
+    img.remove();
+  };
   img.src = url.href;
   container.append(img);
 }
@@ -740,7 +888,7 @@ tooltip.addEventListener('focusout', e => {
 });
 
 function showTooltip(evt, d) {
-  if (portraitDialog.open) return;
+  if (portraitDialog.open || !portraitMenu.hidden) return;
   clearTimeout(tooltipHideTimer);
   const reg = REGIONS[d.region];
   const roleZh = (ROLE_LABELS && d.role) ? (ROLE_LABELS[d.role] || d.role) : '';
@@ -773,7 +921,7 @@ function moveTip(evt) {
 function hideTip(immediate = false) {
   clearTimeout(tooltipHideTimer);
   if (immediate === true) tooltip.style.display = 'none';
-  else tooltipHideTimer = setTimeout(() => { tooltip.style.display = 'none'; }, 160);
+  else if (portraitMenu.hidden) tooltipHideTimer = setTimeout(() => { tooltip.style.display = 'none'; }, 160);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1355,11 +1503,19 @@ function applyAllFilters() {
 }
 
 // ── Region map emphasis ────────────────────────────────────
-// Default (un-highlighted) country style — matches the .country CSS.
+// Neutral style for unmapped territories; known countries always show their region.
 const COUNTRY_BASE = { fill: '#1e2840', opacity: 1, stroke: '#2d3a52', strokeWidth: 0.4 };
 
 function isCountryActive(el, activeSubs) {
   return activeSubs.has(el.dataset.subregion) || activeSubs.has(el.dataset.continent);
+}
+
+function countryFill(el, activeSubs) {
+  const { subregion, continent } = el.dataset;
+  if (!subregion && !continent) return COUNTRY_BASE.fill;
+  // Darken the existing swatches so person dots remain legible on the map.
+  const shade = !activeSubs ? -0.5 : isCountryActive(el, activeSubs) ? -0.25 : -0.78;
+  return lightenColor(regionColor(subregion, continent), shade);
 }
 
 function applyRegionEmphasis() {
@@ -1369,29 +1525,17 @@ function applyRegionEmphasis() {
   // NOTE: the `.country` CSS rule sets fill/stroke, which override SVG
   // presentation attributes — so these must be applied as inline styles
   // (via .style) to take effect, not as attributes.
-  if (!activeSubs) {
-    // No filter: every country back to its normal neutral style.
-    sel.style('fill', COUNTRY_BASE.fill)
-       .style('opacity', COUNTRY_BASE.opacity)
-       .style('stroke', COUNTRY_BASE.stroke)
-       .style('stroke-width', COUNTRY_BASE.strokeWidth);
-  } else {
-    // Selected regions get an elegant fill in their own region color,
-    // brightened so they read clearly against the darker, un-highlighted
-    // regions; everything else simply stays neutral (no harsh fade-out).
-    sel.style('fill', function() {
-        if (!isCountryActive(this, activeSubs)) return COUNTRY_BASE.fill;
-        return lightenColor(regionColor(this.dataset.subregion, this.dataset.continent), -0.5);
-      })
-      .style('opacity', COUNTRY_BASE.opacity)
-      .style('stroke', function() {
-        if (!isCountryActive(this, activeSubs)) return COUNTRY_BASE.stroke;
-        return regionColor(this.dataset.subregion, this.dataset.continent);
-      })
-      .style('stroke-width', function() {
-        return isCountryActive(this, activeSubs) ? 0.9 : COUNTRY_BASE.strokeWidth;
-      });
-  }
+  // Filtering emphasizes selected regions while retaining the color families
+  // of the other continents. Clearing the filter restores all region colors.
+  sel.style('fill', function() { return countryFill(this, activeSubs); })
+    .style('opacity', COUNTRY_BASE.opacity)
+    .style('stroke', function() {
+      if (!activeSubs || !isCountryActive(this, activeSubs)) return COUNTRY_BASE.stroke;
+      return regionColor(this.dataset.subregion, this.dataset.continent);
+    })
+    .style('stroke-width', function() {
+      return activeSubs && isCountryActive(this, activeSubs) ? 0.9 : COUNTRY_BASE.strokeWidth;
+    });
 
   // Also apply to person dots
   applyAllFilters();
