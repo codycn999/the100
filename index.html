@@ -461,9 +461,9 @@ button.person-portrait:focus-visible { outline: 2px solid #79c0ff; outline-offse
 
   <div id="map-color-btns">
     <span class="cmode-label">着色</span>
-    <button class="fit-btn active" data-color="region" title="按地区着色">地区</button>
+    <button class="fit-btn" data-color="region" title="按地区着色">地区</button>
     <button class="fit-btn" data-color="domain" title="按领域着色">领域</button>
-    <button class="fit-btn" data-color="role" title="按角色着色">角色</button>
+    <button class="fit-btn active" data-color="role" title="按角色着色">角色</button>
   </div>
 </div>
 
@@ -634,11 +634,15 @@ function lightenColor(hex, amount) {
   return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`;
 }
 
-// Person-node coloring for map + timeline. Toggleable between region (default),
-// domain, and role via the #map-color-btns control.
-let colorMode = 'region';            // 'region' | 'domain' | 'role'
+function roleColor(person) {
+  return ROLE_COLORS[person.role] || '#8b949e';
+}
+
+// Person-node coloring for map + timeline. Role is the default; region and
+// domain remain available via the #map-color-btns control.
+let colorMode = 'role';              // 'region' | 'domain' | 'role'
 function nodeColor(d) {
-  if (colorMode === 'role')   return ROLE_COLORS[d.role] || '#8b949e';
+  if (colorMode === 'role')   return roleColor(d);
   if (colorMode === 'domain') return (DOMAIN_LABELS[d.domain] || {}).color || '#8b949e';
   return (REGIONS[d.region] || {}).color || '#8b949e';
 }
@@ -659,6 +663,7 @@ function activeSubregions() {
 
 // Timeline heights
 const TL_HEIGHT_DOT = 100;      // px for dots
+const TL_DOMAIN_ORDER = ['Nature', 'Spirit', 'Society'];
 const TL_ROW_H = 22;            // px per row in lifeline mode
 const TL_AXIS_H = 30;           // px for axis area
 const TL_MAX_H = 280;           // max px before scrolling
@@ -892,7 +897,6 @@ function showTooltip(evt, d) {
   clearTimeout(tooltipHideTimer);
   const reg = REGIONS[d.region];
   const roleZh = (ROLE_LABELS && d.role) ? (ROLE_LABELS[d.role] || d.role) : '';
-  const domainInfo = (DOMAIN_LABELS && d.domain) ? DOMAIN_LABELS[d.domain] : null;
   tooltip.innerHTML = `
     <div class="tt-header">
       <button class="tt-portrait person-portrait" type="button" aria-haspopup="dialog" disabled></button>
@@ -905,7 +909,7 @@ function showTooltip(evt, d) {
     </div>
     <div style="margin-top:4px;display:flex;gap:6px;align-items:center">
       <span style="font-size:10px;color:${reg.color}">${reg.label}</span>
-      ${domainInfo ? `<span style="font-size:10px;color:${domainInfo.color}">${roleZh}</span>` : ''}
+      ${roleZh ? `<span class="role-label" style="font-size:10px;color:${roleColor(d)}">${roleZh}</span>` : ''}
     </div>`;
   renderPortrait(tooltip.querySelector('.tt-portrait'), d);
   tooltip.style.display = 'block';
@@ -953,13 +957,14 @@ async function openDetail(p) {
   const tagsEl = document.getElementById('detail-tags');
   const domainInfo = (DOMAIN_LABELS && p.domain) ? DOMAIN_LABELS[p.domain] : null;
   const roleZh = (ROLE_LABELS && p.role) ? (ROLE_LABELS[p.role] || p.role) : '';
+  const roleCol = roleColor(p);
   // Country pills: show the Chinese name from the (now complete) COUNTRIES
   // table, falling back to the ISO code when unknown.
   const countryName = c => (COUNTRIES[c] && COUNTRIES[c].zh) ? COUNTRIES[c].zh : c;
   tagsEl.innerHTML = [
     `<span class="tag-pill" style="background:${reg.bg};color:${reg.color};border-color:${reg.color}44">${reg.label}</span>`,
     domainInfo ? `<span class="tag-pill domain-${p.domain}">${domainInfo.label}</span>` : '',
-    roleZh    ? `<span class="tag-pill domain-${p.domain}">${roleZh}</span>` : '',
+    roleZh    ? `<span class="tag-pill role-tag" style="color:${roleCol};background:${roleCol}18;border-color:${roleCol}44">${roleZh}</span>` : '',
     ...(p.countries || []).map(c => `<span class="tag-pill" style="font-size:9px" title="${c}">${countryName(c)}</span>`),
   ].filter(Boolean).join('');
   const body = document.getElementById('detail-body');
@@ -1689,12 +1694,13 @@ function renderTimeline() {
 // ── Dot mode ────────────────────────────────────────────────
 function renderDots(persons, start, end, W) {
   const H = TL_HEIGHT_DOT;
+  const LEFT = 76, RIGHT = 20;
   const tl = document.getElementById('timeline');
   tl.style.height = (36 + H) + 'px';
   const svg = d3.select('#timeline-svg').attr('height', H);
   svg.selectAll('*').remove();
 
-  const xScale = d3.scaleLinear().domain([start, end]).range([48, W - 20]);
+  const xScale = d3.scaleLinear().domain([start, end]).range([LEFT, W - RIGHT]);
 
   // Era band backgrounds
   const eraSegs = [
@@ -1706,8 +1712,8 @@ function renderDots(persons, start, end, W) {
   ];
   const eraLabels = ['上古','古典','中世纪','近代','现代'];
   eraSegs.forEach((seg, i) => {
-    const x1 = Math.max(xScale(seg.s), 48);
-    const x2 = Math.min(xScale(seg.e), W - 20);
+    const x1 = Math.max(xScale(seg.s), LEFT);
+    const x2 = Math.min(xScale(seg.e), W - RIGHT);
     if (x2 <= x1) return;
     svg.append('rect').attr('x', x1).attr('y', 0)
       .attr('width', x2 - x1).attr('height', H).attr('fill', seg.c);
@@ -1719,7 +1725,7 @@ function renderDots(persons, start, end, W) {
       .attr('font-weight', '600')
       .text(eraLabels[i]);
     // Separator line
-    if (x1 > 48) {
+    if (x1 > LEFT) {
       svg.append('line')
         .attr('x1', x1).attr('y1', 0).attr('x2', x1).attr('y2', H)
         .attr('stroke', seg.lc).attr('stroke-width', 0.5).attr('opacity', 0.4);
@@ -1729,7 +1735,7 @@ function renderDots(persons, start, end, W) {
   // Axis
   const axisY = H - 18;
   svg.append('line')
-    .attr('x1', 48).attr('y1', axisY).attr('x2', W - 20).attr('y2', axisY)
+    .attr('x1', LEFT).attr('y1', axisY).attr('x2', W - RIGHT).attr('y2', axisY)
     .attr('stroke', '#3d4760').attr('stroke-width', 0.6);
 
   const range = end - start;
@@ -1737,7 +1743,7 @@ function renderDots(persons, start, end, W) {
   const tickStart = Math.ceil(start / tickInterval) * tickInterval;
   for (let t = tickStart; t <= end; t += tickInterval) {
     const x = xScale(t);
-    if (x < 52 || x > W - 24) continue;
+    if (x < LEFT + 4 || x > W - RIGHT - 4) continue;
     svg.append('line')
       .attr('x1', x).attr('y1', axisY - 4).attr('x2', x).attr('y2', axisY + 4)
       .attr('stroke', '#4a5570').attr('stroke-width', 0.8);
@@ -1749,17 +1755,25 @@ function renderDots(persons, start, end, W) {
       .text(t < 0 ? `BC${Math.abs(t)}` : t === 0 ? '公元0' : t);
   }
 
-  // Row stacking
+  // Fixed domain lanes: each person's vertical position stays stable across
+  // time ranges, domain filters, and changes to the person color mode.
   const DOT_AREA_H = H - 28;
-  const ROWS = 3;
-  const rowH = DOT_AREA_H / ROWS;
-  const colBuckets = {};
+  const rowH = DOT_AREA_H / TL_DOMAIN_ORDER.length;
+  TL_DOMAIN_ORDER.forEach((domain, row) => {
+    const y = 16 + row * rowH + rowH / 2;
+    svg.append('line')
+      .attr('x1', LEFT).attr('y1', y).attr('x2', W - RIGHT).attr('y2', y)
+      .attr('stroke', DOMAIN_LABELS[domain].color).attr('stroke-width', 0.5).attr('opacity', 0.2);
+    svg.append('text')
+      .attr('class', 'tl-domain-label')
+      .attr('x', 8).attr('y', y)
+      .attr('dominant-baseline', 'middle')
+      .attr('fill', DOMAIN_LABELS[domain].color).attr('font-size', '10px')
+      .text(DOMAIN_LABELS[domain].label);
+  });
   const sorted = [...persons].sort((a, b) => a.birth - b.birth);
   sorted.forEach(d => {
-    const xi = Math.round(xScale(d.birth) / 6);
-    colBuckets[xi] = (colBuckets[xi] || 0);
-    const row = colBuckets[xi] % ROWS;
-    colBuckets[xi]++;
+    const row = TL_DOMAIN_ORDER.indexOf(d.domain);
     d._tlx = xScale(d.birth);
     d._tly = 16 + row * rowH + rowH / 2;
   });

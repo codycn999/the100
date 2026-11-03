@@ -235,3 +235,55 @@ test('portrait context menu refreshes one image and Escape dismisses only the me
   assert.equal(h.elements.get('portrait-dialog').open, true);
   assert.equal(h.document.activeElement, h.elements.get('portrait-refresh'));
 });
+
+test('dot timeline keeps people in fixed domain lanes across ranges and color modes', () => {
+  const labels = [];
+  const circles = { data() { return this; }, join() { return this; }, attr() { return this; }, on() { return this; }, remove() {} };
+  const svg = {
+    attr() { return this; }, selectAll() { return circles; },
+    append() {
+      const node = { attrs: {}, attr(key, value) { this.attrs[key] = value; return this; },
+        text(value) { if (this.attrs.class === 'tl-domain-label') labels.push(value); return this; } };
+      return node;
+    },
+  };
+  const scaleLinear = () => {
+    let domain, range;
+    const scale = value => range[0] + (value - domain[0]) / (domain[1] - domain[0]) * (range[1] - range[0]);
+    scale.domain = value => { domain = value; return scale; };
+    scale.range = value => { range = value; return scale; };
+    return scale;
+  };
+  const people = [
+    { birth: 100, domain: 'Society', role: 'General' },
+    { birth: 100, domain: 'Nature', role: 'Physicist' },
+    { birth: 100, domain: 'Spirit', role: 'Philosopher' },
+    { birth: 101, domain: 'Nature', role: 'Inventor' },
+    { birth: 102, domain: 'Spirit', role: 'Spiritual' },
+  ];
+  const context = vm.createContext({
+    document: { getElementById: () => ({ style: {} }) },
+    d3: { select: () => svg, scaleLinear }, people, moveTip() {}, hideTip() {},
+  });
+  const colors = code.slice(code.indexOf('function roleColor('), code.indexOf('// REGION FILTER STATE'));
+  const constants = code.slice(code.indexOf('const TL_HEIGHT_DOT'), code.indexOf('let worldData'));
+  const dots = code.slice(code.indexOf('function renderDots('), code.indexOf('// ── Lifeline mode'));
+  vm.runInContext(read('data.js') + read('role-colors.js') + colors + constants + dots, context);
+  assert.equal(vm.runInContext('nodeColor(people[0])', context), '#d07828', 'default person color comes from their role');
+  vm.runInContext('renderDots(people, 0, 2000, 800)', context);
+  assert.deepEqual(labels, ['自然·科学', '思想·文化', '政治·社会']);
+  const [society, nature, spirit, inventor, spiritual] = people;
+  assert.ok(nature._tly < spirit._tly && spirit._tly < society._tly);
+  assert.equal(nature._tly, inventor._tly);
+  assert.equal(spirit._tly, spiritual._tly);
+  assert.equal(nature._tlx, society._tlx, 'birth year determines horizontal position across domains');
+  assert.ok(inventor._tlx > nature._tlx);
+  const initialRows = people.map(person => person._tly);
+  for (const mode of ['region', 'domain', 'role']) {
+    context.mode = mode;
+    vm.runInContext('colorMode = mode; renderDots(people, -500, 2500, 400)', context);
+    assert.deepEqual(people.map(person => person._tly), initialRows);
+  }
+  vm.runInContext('renderDots(people.filter(p => p.domain === "Spirit"), 0, 2000, 800)', context);
+  assert.equal(spirit._tly, initialRows[2], 'a single remaining domain keeps its original lane');
+});
