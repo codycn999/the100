@@ -8,6 +8,7 @@
 <script src="https://cdn.jsdelivr.net/npm/topojson@3"></script>
 <script src="role-colors.js"></script>
 <script src="data.js?v=df1902d"></script>
+<script src="portrait-positions.js?v=20261103"></script>
 <script src="content.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -345,6 +346,7 @@ body.resizing-detail, body.resizing-detail * { cursor: ew-resize !important; use
   border-radius: 6px; background: #161b22; box-shadow: 0 4px 16px #0008;
 }
 #portrait-menu button { display: block; width: 100%; text-align: left; color: #e6edf3; }
+#portrait-menu button[hidden] { display: none; }
 .person-portrait {
   position: relative; overflow: hidden; background: #0d1117;
   border: 1px solid #30363d;
@@ -384,6 +386,32 @@ button.person-portrait:focus-visible { outline: 2px solid #79c0ff; outline-offse
 #portrait-error { padding: 20px; color: #f0b86e; font-size: 13px; }
 #portrait-actions { display: flex; justify-content: center; align-items: center; gap: 8px; margin-top: 8px; }
 #portrait-status { color: #8b949e; font-size: 12px; }
+
+/* ── Portrait crop editor ── */
+#portrait-crop-dialog {
+  margin: auto; padding: 20px; width: min(380px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px); overflow-y: auto;
+  border: 1px solid #30363d; border-radius: 12px; background: #161b22; color: #e6edf3;
+}
+#portrait-crop-dialog::backdrop { background: #000b; }
+#portrait-crop-title { font-size: 16px; margin-bottom: 8px; }
+#portrait-crop-help, #portrait-crop-status { font-size: 12px; color: #8b949e; margin: 8px 0; }
+#portrait-crop-preview {
+  position: relative; width: 100%; aspect-ratio: 1; overflow: hidden;
+  border-radius: 6px; background: #0d1117; outline: 1px solid #30363d;
+  cursor: grab; touch-action: none; user-select: none;
+}
+#portrait-crop-preview.dragging { cursor: grabbing; }
+#portrait-crop-preview:focus-visible { outline: 2px solid #79c0ff; }
+#portrait-crop-image { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+#portrait-crop-image[hidden] { display: none; }
+#portrait-crop-position-label { display: flex; align-items: center; gap: 10px; margin: 14px 0 8px; font-size: 12px; }
+#portrait-crop-position { flex: 1; min-width: 0; accent-color: #79c0ff; }
+#portrait-crop-value { width: 56px; padding: 4px; background: #0d1117; color: #e6edf3; border: 1px solid #30363d; border-radius: 4px; }
+#portrait-crop-field { width: 100%; padding: 8px; margin-bottom: 4px; background: #0d1117; color: #79c0ff; border: 1px solid #30363d; border-radius: 4px; }
+#portrait-crop-actions { display: flex; justify-content: flex-end; gap: 6px; }
+#portrait-crop-save { background: #1f6feb; color: #fff; }
+#portrait-crop-actions button:disabled { opacity: .45; cursor: default; }
 
 /* ── Tag pills ── */
 .tag-pills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
@@ -498,6 +526,7 @@ button.person-portrait:focus-visible { outline: 2px solid #79c0ff; outline-offse
       <div class="detail-portrait-tools">
         <button id="detail-portrait" class="person-portrait" type="button" aria-label="查看人物头像大图" aria-haspopup="dialog" disabled></button>
         <button id="detail-portrait-refresh" class="portrait-refresh" type="button" title="重新获取此头像" hidden>↻ 刷新头像</button>
+        <button id="detail-portrait-crop" class="portrait-refresh" type="button" aria-haspopup="dialog" hidden>调整头像</button>
       </div>
       <div id="detail-header-text">
         <div id="detail-rank"></div>
@@ -515,6 +544,7 @@ button.person-portrait:focus-visible { outline: 2px solid #79c0ff; outline-offse
 <div id="tooltip"></div>
 
 <div id="portrait-menu" role="menu" aria-label="头像操作" hidden>
+  <button id="portrait-menu-crop" class="portrait-refresh" type="button" role="menuitem" aria-haspopup="dialog">调整头像显示</button>
   <button id="portrait-menu-refresh" class="portrait-refresh" type="button" role="menuitem">↻ 刷新此头像</button>
 </div>
 
@@ -526,9 +556,29 @@ button.person-portrait:focus-visible { outline: 2px solid #79c0ff; outline-offse
   </figure>
   <div id="portrait-actions">
     <button id="portrait-refresh" class="portrait-refresh" type="button" hidden>↻ 刷新头像</button>
+    <button id="portrait-crop" class="portrait-refresh" type="button" aria-haspopup="dialog">调整头像</button>
     <span id="portrait-status" role="status"></span>
   </div>
   <p id="portrait-error" role="alert" hidden>图片加载失败，请稍后重试。</p>
+</dialog>
+
+<dialog id="portrait-crop-dialog" aria-labelledby="portrait-crop-title" aria-describedby="portrait-crop-help">
+  <h2 id="portrait-crop-title">调整头像显示</h2>
+  <p id="portrait-crop-help">拖动图片或调整 0–100 的位置值。将下方配置写入本站的 portrait-positions.js 并发布后，对所有访客生效。</p>
+  <div id="portrait-crop-preview" tabindex="0" role="group" aria-label="正方形头像预览，可拖动图片或用方向键移动" aria-describedby="portrait-crop-help">
+    <img id="portrait-crop-image" alt="" referrerpolicy="no-referrer" draggable="false" hidden>
+  </div>
+  <label id="portrait-crop-position-label" for="portrait-crop-position"><span id="portrait-crop-direction">位置</span>
+    <input id="portrait-crop-position" type="range" min="0" max="100" step="1" value="50" disabled>
+  </label>
+  <label for="portrait-crop-value">位置值（%） <input id="portrait-crop-value" type="number" min="0" max="100" step="1" value="50" disabled></label>
+  <input id="portrait-crop-field" aria-label="本站头像位置配置" value="" readonly>
+  <p id="portrait-crop-status" role="status">加载中…</p>
+  <div id="portrait-crop-actions">
+    <button id="portrait-crop-reset" class="portrait-refresh" type="button" disabled>居中</button>
+    <button id="portrait-crop-cancel" class="portrait-refresh" type="button">关闭</button>
+    <button id="portrait-crop-save" class="portrait-refresh" type="button" disabled>复制配置</button>
+  </div>
 </dialog>
 
 <script>
@@ -788,6 +838,7 @@ portraitFullImage.addEventListener('error', () => {
 
 const portraitMenu = document.getElementById('portrait-menu');
 const portraitMenuRefresh = document.getElementById('portrait-menu-refresh');
+const portraitMenuCrop = document.getElementById('portrait-menu-crop');
 let portraitMenuTarget = null;
 let portraitMenuPerson = null;
 function closePortraitMenu(restoreFocus = false) {
@@ -797,13 +848,16 @@ function closePortraitMenu(restoreFocus = false) {
   portraitMenuPerson = null;
 }
 document.addEventListener('contextmenu', e => {
+  if (portraitCropDialog.open) return;
   const container = e.target.closest('.person-portrait');
   const person = container ? portraitPeople.get(container) : e.target === portraitFullImage ? currentPortrait : null;
   const url = person && getPortraitURL(person);
-  if (!url || !canRefreshPortrait(url)) { closePortraitMenu(); return; }
+  if (!url) { closePortraitMenu(); return; }
   e.preventDefault();
-  portraitMenuTarget = container || document.getElementById('portrait-refresh');
+  portraitMenuTarget = container || document.getElementById('portrait-crop');
   portraitMenuPerson = person;
+  portraitMenuRefresh.hidden = !canRefreshPortrait(url);
+  portraitMenuCrop.hidden = false;
   // Keep the menu in the dialog's top layer while viewing a full portrait.
   (portraitDialog.open ? portraitDialog : document.body).append(portraitMenu);
   portraitMenu.hidden = false;
@@ -813,7 +867,12 @@ document.addEventListener('contextmenu', e => {
   const y = e.clientY || bounds.bottom;
   portraitMenu.style.left = Math.max(4, Math.min(x, window.innerWidth - rect.width - 4)) + 'px';
   portraitMenu.style.top = Math.max(4, Math.min(y, window.innerHeight - rect.height - 4)) + 'px';
-  portraitMenuRefresh.focus();
+  portraitMenuCrop.focus();
+});
+portraitMenuCrop.addEventListener('click', () => {
+  const person = portraitMenuPerson;
+  closePortraitMenu(true);
+  openPortraitCrop(person);
 });
 portraitMenuRefresh.addEventListener('click', () => {
   const person = portraitMenuPerson;
@@ -832,7 +891,11 @@ document.addEventListener('keydown', e => {
   } else if (e.key === 'Tab') closePortraitMenu(true);
   else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
     e.preventDefault();
-    portraitMenuRefresh.focus();
+    const items = [portraitMenuCrop, portraitMenuRefresh].filter(button => !button.hidden);
+    const current = items.indexOf(document.activeElement);
+    const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1
+      : (current + (e.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length;
+    items[next].focus();
   }
 });
 window.addEventListener('resize', () => closePortraitMenu());
@@ -849,6 +912,7 @@ function renderPortrait(container, person) {
   const url = getPortraitURL(person);
   if (container.id === 'detail-portrait') {
     document.getElementById('detail-portrait-refresh').hidden = !url || !canRefreshPortrait(url);
+    document.getElementById('detail-portrait-crop').hidden = !url;
   }
   const color = REGIONS[person.region]?.color || '#8b949e';
   const fallback = document.createElement('span');
@@ -865,9 +929,10 @@ function renderPortrait(container, person) {
   img.referrerPolicy = 'no-referrer';
   img.onload = () => {
     if (!container.contains(img)) return;
+    applyPortraitPosition(img, portraitPosition(person));
     fallback.remove();
     container.disabled = false;
-    container.title = canRefreshPortrait(url) ? '点击查看大图；右键可刷新头像' : '点击查看大图';
+    container.title = '点击查看大图；右键可调整头像';
     container.onclick = () => openPortrait(person);
   };
   img.onerror = () => {
@@ -878,6 +943,149 @@ function renderPortrait(container, person) {
   img.src = url.href;
   container.append(img);
 }
+
+// The site-owned position moves the square along the image's overflow:
+// 0 = top/left, 50 = center, 100 = bottom/right. object-fit preserves its ratio.
+function normalizePortraitPosition(value) {
+  if (!['number', 'string'].includes(typeof value) || String(value).trim() === '') return 50;
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.max(0, Math.min(100, Math.round(number))) : 50;
+}
+function portraitPosition(person) {
+  return normalizePortraitPosition(person && PORTRAIT_POSITIONS[person.rank]);
+}
+function applyPortraitPosition(img, value) {
+  const position = normalizePortraitPosition(value);
+  img.style.objectPosition = `${position}% ${position}%`;
+}
+
+const portraitCropDialog = document.getElementById('portrait-crop-dialog');
+const portraitCropPreview = document.getElementById('portrait-crop-preview');
+const portraitCropImage = document.getElementById('portrait-crop-image');
+const portraitCropPosition = document.getElementById('portrait-crop-position');
+const portraitCropValue = document.getElementById('portrait-crop-value');
+const portraitCropSave = document.getElementById('portrait-crop-save');
+const portraitCropReset = document.getElementById('portrait-crop-reset');
+const portraitCropStatus = document.getElementById('portrait-crop-status');
+let portraitCropState = null;
+let portraitCropDrag = null;
+function paintPortraitCrop() {
+  if (!portraitCropState) return;
+  const position = portraitCropState.position;
+  portraitCropPosition.value = portraitCropValue.value = position;
+  document.getElementById('portrait-crop-field').value = `  ${portraitCropState.person.rank}: ${position},`;
+  applyPortraitPosition(portraitCropImage, position);
+}
+function openPortraitCrop(person) {
+  const url = person && getPortraitURL(person);
+  if (!url) return;
+  hideTip(true);
+  closePortraitMenu();
+  const state = { person, position: portraitPosition(person), ready: false };
+  portraitCropState = state;
+  document.getElementById('portrait-crop-title').textContent = `调整${person.zh || person.en || '人物'}头像`;
+  portraitCropSave.disabled = portraitCropReset.disabled = portraitCropPosition.disabled = portraitCropValue.disabled = true;
+  portraitCropImage.hidden = true;
+  portraitCropStatus.textContent = '加载中…';
+  document.getElementById('portrait-crop-direction').textContent = '位置';
+  portraitCropImage.alt = `${person.zh || person.en || '人物'}头像裁切预览`;
+  paintPortraitCrop();
+  portraitCropImage.onload = () => {
+    if (portraitCropState !== state || !portraitCropDialog.open) return;
+    if (!(portraitCropImage.naturalWidth > 0 && portraitCropImage.naturalHeight > 0)) {
+      portraitCropStatus.textContent = '无法读取图片尺寸，请换一张图片后重试。';
+      return;
+    }
+    state.ready = true;
+    portraitCropSave.disabled = portraitCropReset.disabled = portraitCropPosition.disabled = portraitCropValue.disabled = false;
+    portraitCropImage.hidden = false;
+    document.getElementById('portrait-crop-direction').textContent = portraitCropImage.naturalWidth > portraitCropImage.naturalHeight ? '左 → 右' : '上 → 下';
+    portraitCropStatus.textContent = portraitCropImage.naturalWidth === portraitCropImage.naturalHeight
+      ? '原图已是正方形，调整位置不会改变显示。' : '0 为靠上或靠左，50 为居中，100 为靠下或靠右。';
+  };
+  portraitCropImage.onerror = () => {
+    if (portraitCropState !== state) return;
+    portraitCropStatus.textContent = '图片加载失败，请关闭后刷新头像再试。';
+  };
+  if (!portraitCropDialog.open) portraitCropDialog.showModal();
+  portraitCropImage.src = url.href;
+}
+function stopPortraitCropDrag(e) {
+  if (!portraitCropDrag || (e && e.pointerId !== portraitCropDrag.pointerId)) return;
+  const { pointerId } = portraitCropDrag;
+  portraitCropDrag = null;
+  portraitCropPreview.classList.remove('dragging');
+  if (portraitCropPreview.hasPointerCapture(pointerId)) portraitCropPreview.releasePointerCapture(pointerId);
+}
+portraitCropPreview.addEventListener('pointerdown', e => {
+  if (!portraitCropState?.ready || e.button !== 0 || e.isPrimary === false) return;
+  e.preventDefault();
+  portraitCropPreview.focus();
+  const size = portraitCropPreview.getBoundingClientRect().width;
+  const width = portraitCropImage.naturalWidth, height = portraitCropImage.naturalHeight;
+  const horizontal = width > height;
+  const overflow = size * (horizontal ? width / height - 1 : height / width - 1);
+  portraitCropDrag = { pointerId: e.pointerId, start: horizontal ? e.clientX : e.clientY,
+    horizontal, overflow, position: portraitCropState.position };
+  portraitCropPreview.setPointerCapture(e.pointerId);
+  portraitCropPreview.classList.add('dragging');
+});
+portraitCropPreview.addEventListener('pointermove', e => {
+  const drag = portraitCropDrag;
+  if (!drag || !portraitCropState?.ready || drag.pointerId !== e.pointerId || drag.overflow <= 0) return;
+  const delta = (drag.horizontal ? e.clientX : e.clientY) - drag.start;
+  portraitCropState.position = normalizePortraitPosition(drag.position - delta / drag.overflow * 100);
+  paintPortraitCrop();
+});
+for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) portraitCropPreview.addEventListener(event, stopPortraitCropDrag);
+portraitCropPreview.addEventListener('keydown', e => {
+  if (!portraitCropState?.ready) return;
+  const keys = portraitCropImage.naturalWidth > portraitCropImage.naturalHeight ? ['ArrowRight', 'ArrowLeft'] : ['ArrowDown', 'ArrowUp'];
+  if (!keys.includes(e.key)) return;
+  e.preventDefault();
+  portraitCropState.position = normalizePortraitPosition(portraitCropState.position + (e.key === keys[0] ? -1 : 1) * (e.shiftKey ? 10 : 1));
+  paintPortraitCrop();
+});
+for (const control of [portraitCropPosition, portraitCropValue]) {
+  control.addEventListener('input', () => {
+    if (!portraitCropState?.ready) return;
+    stopPortraitCropDrag();
+    portraitCropState.position = normalizePortraitPosition(control.value);
+    paintPortraitCrop();
+  });
+}
+portraitCropReset.addEventListener('click', () => {
+  if (!portraitCropState?.ready) return;
+  stopPortraitCropDrag();
+  portraitCropState.position = 50;
+  paintPortraitCrop();
+});
+portraitCropSave.addEventListener('click', async () => {
+  if (!portraitCropState?.ready) return;
+  const state = portraitCropState;
+  const field = document.getElementById('portrait-crop-field');
+  try {
+    await navigator.clipboard.writeText(field.value);
+    if (portraitCropState === state) portraitCropStatus.textContent = '配置已复制。写入本站的 portrait-positions.js，更新其版本号并发布后，全站生效。';
+  } catch {
+    if (portraitCropState !== state) return;
+    field.focus();
+    field.select();
+    portraitCropStatus.textContent = '请复制已选中的配置，写入本站的 portrait-positions.js 后发布。';
+  }
+});
+document.getElementById('portrait-crop-cancel').addEventListener('click', () => portraitCropDialog.close());
+portraitCropDialog.addEventListener('close', () => {
+  stopPortraitCropDrag();
+  portraitCropState = null;
+  portraitCropImage.onload = portraitCropImage.onerror = null;
+  portraitCropImage.removeAttribute('src');
+});
+window.addEventListener('resize', () => stopPortraitCropDrag());
+document.getElementById('detail-portrait-crop').addEventListener('click', () => {
+  openPortraitCrop(portraitPeople.get(document.getElementById('detail-portrait')));
+});
+document.getElementById('portrait-crop').addEventListener('click', () => openPortraitCrop(currentPortrait));
 
 // ═══════════════════════════════════════════════════════════
 // TOOLTIP
@@ -893,7 +1101,7 @@ tooltip.addEventListener('focusout', e => {
 });
 
 function showTooltip(evt, d) {
-  if (portraitDialog.open || !portraitMenu.hidden) return;
+  if (portraitDialog.open || portraitCropDialog.open || !portraitMenu.hidden) return;
   clearTimeout(tooltipHideTimer);
   const reg = REGIONS[d.region];
   const roleZh = (ROLE_LABELS && d.role) ? (ROLE_LABELS[d.role] || d.role) : '';
@@ -1702,25 +1910,27 @@ function renderDots(persons, start, end, W) {
 
   const xScale = d3.scaleLinear().domain([start, end]).range([LEFT, W - RIGHT]);
 
-  // Era band backgrounds
+  // Alternate neutral backgrounds to separate historical eras.
   const eraSegs = [
-    { s: -3200, e: -500,  c: '#251a08', lc: '#6b5020' },
-    { s: -500,  e: 500,   c: '#081420', lc: '#3060a0' },
-    { s: 500,   e: 1400,  c: '#141408', lc: '#606030' },
-    { s: 1400,  e: 1800,  c: '#081414', lc: '#206060' },
-    { s: 1800,  e: 2030,  c: '#081408', lc: '#306030' },
+    { s: -3200, e: -500 },
+    { s: -500,  e: 500 },
+    { s: 500,   e: 1400 },
+    { s: 1400,  e: 1800 },
+    { s: 1800,  e: 2030 },
   ];
+  const eraBandColors = ['#181d23', '#252a30'];
+  const eraLabelColor = '#b8c0c9';
   const eraLabels = ['上古','古典','中世纪','近代','现代'];
   eraSegs.forEach((seg, i) => {
     const x1 = Math.max(xScale(seg.s), LEFT);
     const x2 = Math.min(xScale(seg.e), W - RIGHT);
     if (x2 <= x1) return;
     svg.append('rect').attr('x', x1).attr('y', 0)
-      .attr('width', x2 - x1).attr('height', H).attr('fill', seg.c);
+      .attr('width', x2 - x1).attr('height', H).attr('fill', eraBandColors[i % 2]);
     svg.append('text')
       .attr('x', (x1 + x2) / 2).attr('y', 13)
       .attr('text-anchor', 'middle')
-      .attr('fill', seg.lc)
+      .attr('fill', eraLabelColor)
       .attr('font-size', '10px')
       .attr('font-weight', '600')
       .text(eraLabels[i]);
@@ -1728,7 +1938,7 @@ function renderDots(persons, start, end, W) {
     if (x1 > LEFT) {
       svg.append('line')
         .attr('x1', x1).attr('y1', 0).attr('x2', x1).attr('y2', H)
-        .attr('stroke', seg.lc).attr('stroke-width', 0.5).attr('opacity', 0.4);
+        .attr('stroke', '#505862').attr('stroke-width', 0.5).attr('opacity', 0.6);
     }
   });
 
@@ -2025,7 +2235,7 @@ async function loadMap() {
 initControls();
 document.getElementById('map-retry').addEventListener('click', loadMap);
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && !portraitDialog.open) closeDetail();
+  if (e.key === 'Escape' && !portraitDialog.open && !portraitCropDialog.open) closeDetail();
 });
 loadMap();
 

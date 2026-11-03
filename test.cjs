@@ -12,6 +12,16 @@ const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]).
 
 test('inline JavaScript parses', () => { new vm.Script(code); });
 
+test('site-owned portrait positions are valid and independent of generated data', () => {
+  const positions = vm.runInNewContext(read('portrait-positions.js') + ';PORTRAIT_POSITIONS');
+  assert.equal(Object.isFrozen(positions), true);
+  for (const [rank, value] of Object.entries(positions)) {
+    assert.ok(Number.isInteger(Number(rank)) && Number(rank) >= 1 && Number(rank) <= 100);
+    assert.ok(Number.isInteger(value) && value >= 0 && value <= 100);
+  }
+  assert.equal(read('build-data.js').includes('img_position'), false);
+});
+
 test('enriching data keeps every role color available', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'the100-test-'));
   try {
@@ -89,14 +99,22 @@ test('default reader width reserves map space; extra width overlays it', () => {
 });
 
 // Exercise portrait interactions without fetching external images.
-function portraitHarness(storage = new Map()) {
+function portraitHarness(storage = new Map(), positions = {}) {
   class Element {
     constructor(id = '', className = '') {
-      Object.assign(this, { id, className, style: {}, children: [], hidden: true, listeners: {}, open: false });
+      Object.assign(this, { id, className, style: {}, children: [], hidden: true, listeners: {}, open: false, naturalWidth: 400, naturalHeight: 600 });
+      const classes = new Set();
+      this.classList = { add: value => classes.add(value), remove: value => classes.delete(value), contains: value => classes.has(value) };
+      this.pointers = new Set();
     }
     addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); }
     emit(type, event = {}) { for (const handler of this.listeners[type] || []) handler(event); }
     setAttribute(key, value) { this[key] = value; }
+    removeAttribute(key) { delete this[key]; }
+    querySelector(tag) { return this.children.find(child => child.tagName === tag) || null; }
+    setPointerCapture(id) { this.pointers.add(id); }
+    hasPointerCapture(id) { return this.pointers.has(id); }
+    releasePointerCapture(id) { this.pointers.delete(id); }
     append(child) { child.remove(); this.children.push(child); child.parent = this; }
     remove() {
       if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this);
@@ -113,6 +131,7 @@ function portraitHarness(storage = new Map()) {
     get isConnected() { return document.body.contains(this); }
     showModal() { this.open = true; }
     close() { this.open = false; this.emit('close'); }
+    select() { this.selected = true; }
   }
   const elements = new Map([...html.matchAll(/id="([^"]+)"/g)].map(match => [match[1], new Element(match[1])]));
   const detail = elements.get('detail-portrait');
@@ -122,24 +141,27 @@ function portraitHarness(storage = new Map()) {
   const document = new Element();
   document.body = new Element();
   document.getElementById = id => elements.get(id);
-  document.createElement = () => new Element();
+  document.createElement = tag => Object.assign(new Element(), { tagName: tag });
   document.querySelectorAll = () => [detail, tip, other];
   for (const element of [...elements.values(), tip, other]) document.body.append(element);
   elements.get('portrait-menu').append(elements.get('portrait-menu-refresh'));
   const window = new Element();
   window.innerWidth = 1000;
   window.innerHeight = 700;
+  const clipboard = [];
   const context = vm.createContext({
     document, window, URL, REGIONS: {}, hideTip() {},
+    PORTRAIT_POSITIONS: positions,
+    navigator: { clipboard: { writeText: async text => clipboard.push(text) } },
     Date: { now: () => 1793664000000 },
     localStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) },
-    person: { zh: '测试人物', img: 'https://docs.suphy.top/file/test.jpg?size=small&v=source#portrait' },
-    another: { zh: '另一人物', img: 'https://docs.suphy.top/file/another.jpg' },
+    person: { rank: 1, zh: '测试人物', img: 'https://docs.suphy.top/file/test.jpg?size=small&v=source#portrait' },
+    another: { rank: 2, zh: '另一人物', img: 'https://docs.suphy.top/file/another.jpg' },
     detail, tip, other,
   });
   const portraitCode = code.slice(code.indexOf('// Bump after replacing same-URL portraits'), code.indexOf('// TOOLTIP'));
   vm.runInContext(portraitCode, context);
-  return { run: source => vm.runInContext(source, context), document, elements, detail, tip, other, storage };
+  return { run: source => vm.runInContext(source, context), document, elements, detail, tip, other, storage, clipboard };
 }
 
 test('manual refresh changes only the selected image and keeps unrelated URL parameters', () => {
@@ -233,7 +255,7 @@ test('portrait context menu refreshes one image and Escape dismisses only the me
   assert.equal(stopped, true);
   assert.equal(menu.hidden, true);
   assert.equal(h.elements.get('portrait-dialog').open, true);
-  assert.equal(h.document.activeElement, h.elements.get('portrait-refresh'));
+  assert.equal(h.document.activeElement, h.elements.get('portrait-crop'));
 });
 
 test('dot timeline keeps people in fixed domain lanes across ranges and color modes', () => {
@@ -286,4 +308,83 @@ test('dot timeline keeps people in fixed domain lanes across ranges and color mo
   }
   vm.runInContext('renderDots(people.filter(p => p.domain === "Spirit"), 0, 2000, 800)', context);
   assert.equal(spirit._tly, initialRows[2], 'a single remaining domain keeps its original lane');
+});
+
+test('portrait positions normalize site values, preserving zero', () => {
+  const h = portraitHarness();
+  const cases = [[undefined, 50], [null, 50], ['', 50], ['bad', 50], [true, 50], [[], 50],
+    [NaN, 50], [Infinity, 50], [0, 0], ['0', 0], [25, 25], ['75', 75], [100, 100], [-1, 0], [101, 100], [25.7, 26]];
+  for (const [value, expected] of cases) {
+    h.run(`globalThis.inputPosition = ${typeof value === 'number' ? String(value) : JSON.stringify(value)}`);
+    assert.equal(h.run('normalizePortraitPosition(inputPosition)'), expected);
+  }
+});
+
+test('portrait position preview supports drag, direct input and copying without saving local overrides', async () => {
+  const h = portraitHarness();
+  h.run('renderPortrait(detail, person); openPortraitCrop(person)');
+  const image = h.elements.get('portrait-crop-image');
+  const preview = h.elements.get('portrait-crop-preview');
+  const copy = h.elements.get('portrait-crop-save');
+  image.naturalWidth = 400;
+  image.naturalHeight = 800;
+  assert.equal(copy.disabled, true);
+  image.onload();
+  assert.equal(copy.disabled, false);
+  assert.equal(image.style.objectPosition, '50% 50%');
+  assert.equal(h.elements.get('portrait-crop-direction').textContent, '上 → 下');
+  preview.emit('pointerdown', { button: 0, pointerId: 1, clientX: 10, clientY: 10, preventDefault() {} });
+  preview.emit('pointermove', { pointerId: 2, clientX: 10, clientY: 80 });
+  assert.equal(image.style.objectPosition, '50% 50%');
+  preview.emit('pointermove', { pointerId: 1, clientX: 10, clientY: 80 });
+  assert.equal(image.style.objectPosition, '0% 0%');
+  preview.emit('pointerup', { pointerId: 1 });
+  assert.equal(preview.hasPointerCapture(1), false);
+  const slider = h.elements.get('portrait-crop-position');
+  slider.value = '75';
+  slider.emit('input');
+  assert.equal(image.style.objectPosition, '75% 75%');
+  preview.emit('keydown', { key: 'ArrowUp', preventDefault() {} });
+  assert.equal(image.style.objectPosition, '76% 76%');
+  const value = h.elements.get('portrait-crop-value');
+  value.value = '150';
+  value.emit('input');
+  assert.equal(image.style.objectPosition, '100% 100%');
+  assert.equal(h.elements.get('portrait-crop-field').value, '  1: 100,');
+  await copy.listeners.click[0]();
+  assert.deepEqual(h.clipboard, ['  1: 100,']);
+  assert.equal(h.run('person.img_position'), undefined, 'preview never changes source person data');
+  assert.equal(h.storage.size, 0, 'no crop override is stored in this browser');
+  h.elements.get('portrait-crop-reset').emit('click');
+  assert.equal(image.style.objectPosition, '50% 50%');
+  h.elements.get('portrait-crop-cancel').emit('click');
+  assert.equal(h.elements.get('portrait-crop-dialog').open, false);
+  assert.equal(h.detail.children.at(-1).style.objectPosition, undefined);
+});
+
+test('shared image position is used by every thumbnail and survives image refresh', () => {
+  const h = portraitHarness(new Map(), { 1: 0 });
+  h.run('renderPortrait(detail, person); renderPortrait(tip, person)');
+  h.detail.children.at(-1).onload();
+  h.tip.children.at(-1).onload();
+  assert.equal(h.detail.children.at(-1).style.objectPosition, '0% 0%');
+  assert.equal(h.tip.children.at(-1).style.objectPosition, '0% 0%');
+  h.run('openPortrait(person)');
+  assert.equal(h.elements.get('portrait-full-image').style.objectPosition, undefined, 'full image remains uncropped');
+  h.run('refreshPortrait(person)');
+  h.detail.children.at(-1).onload();
+  assert.equal(h.detail.children.at(-1).style.objectPosition, '0% 0%');
+  h.run('openPortraitCrop(person)');
+  const image = h.elements.get('portrait-crop-image');
+  image.naturalWidth = 800;
+  image.naturalHeight = 400;
+  image.onload();
+  assert.equal(h.elements.get('portrait-crop-position').value, 0);
+  assert.equal(h.elements.get('portrait-crop-direction').textContent, '左 → 右');
+  const preview = h.elements.get('portrait-crop-preview');
+  preview.emit('pointerdown', { button: 0, pointerId: 1, clientX: 80, clientY: 10, preventDefault() {} });
+  preview.emit('pointermove', { pointerId: 1, clientX: 10, clientY: 10 });
+  assert.equal(image.style.objectPosition, '50% 50%');
+  preview.emit('pointercancel', { pointerId: 1 });
+  assert.equal(preview.hasPointerCapture(1), false);
 });
