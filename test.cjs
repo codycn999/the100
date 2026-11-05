@@ -67,6 +67,25 @@ test('period layout packs overlaps into rows, hides tier 2 when zoomed out, and 
   assert.equal(layout([p('gone', 2100, 2200)], 0, 100).items.length, 0, 'out-of-range periods are skipped');
 });
 
+test('lifeline bars show for spans up to 2000 years and dragged heights are clamped', () => {
+  const ctx = vm.createContext({ window: { innerHeight: 900 } });
+  vm.runInContext(code.match(/const LIFELINE_MAX_SPAN = \d+;/)[0] +
+    code.slice(code.indexOf('function isLifelineMode('), code.indexOf('// Greedy row assignment')), ctx);
+  assert.equal(vm.runInContext('isLifelineMode(0, 2000)', ctx), true);
+  assert.equal(vm.runInContext('isLifelineMode(500, 2030)', ctx), true, 'medieval + modern range uses bars');
+  assert.equal(vm.runInContext('isLifelineMode(0, 2001)', ctx), false);
+  vm.runInContext(code.match(/const TL_CONTROLS_H = \d+;/)[0] +
+    code.slice(code.indexOf('// ── Timeline frame'), code.indexOf('// Round tick steps')), ctx);
+  const height = () => JSON.parse(JSON.stringify(vm.runInContext('resolveTimelineHeight(60, 84)', ctx)));
+  assert.deepEqual(height(), { total: 188, bodyH: 84 }, 'automatic height without a stored preference');
+  vm.runInContext('tlUserHeight = 400', ctx);
+  assert.deepEqual(height(), { total: 400, bodyH: 296 });
+  vm.runInContext('tlUserHeight = 5000', ctx);
+  assert.equal(height().total, 708, 'leaves room for the header and some map');
+  vm.runInContext('tlUserHeight = 10', ctx);
+  assert.equal(height().bodyH, 48, 'keeps a minimum body');
+});
+
 test('self-hosted fonts referenced by index.html exist with their licenses', () => {
   const fonts = [...html.matchAll(/url\("(fonts\/[^"]+)"\)/g)].map(m => m[1]);
   assert.ok(fonts.length >= 1);

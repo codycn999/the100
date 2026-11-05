@@ -170,6 +170,7 @@ button { font-family: inherit; }
 
 /* ── Timeline ── */
 #timeline {
+  position: relative;
   flex: 0 0 auto;
   background: var(--surface-1);
   border-top: 1px solid var(--line-soft);
@@ -205,8 +206,13 @@ button { font-family: inherit; }
 }
 .era-btn:hover { background: var(--surface-3); color: var(--text); }
 .era-btn.active { background: var(--accent-bg); border-color: var(--accent-line); color: var(--accent); }
-.era-btn.range-start, .era-btn.range-end { background: var(--gold-bg); border-color: rgba(230,194,122,.5); color: var(--gold); }
-.era-btn.range-mid { background: rgba(124,176,255,.07); color: #a9c7f5; }
+/* A two-era selection highlights the whole range, including the eras in between. */
+.era-btn.range-start, .era-btn.range-mid, .era-btn.range-end {
+  background: var(--accent-bg); border-color: var(--accent-line); color: var(--accent);
+}
+.era-btn.range-start { border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
+.era-btn.range-mid { border-radius: 3px; }
+.era-btn.range-end { border-top-left-radius: 3px; border-bottom-left-radius: 3px; }
 
 #yr-range {
   display: none;
@@ -246,6 +252,22 @@ button { font-family: inherit; }
   position: relative;
 }
 #timeline-svg { display: block; width: 100%; }
+#timeline-head-svg { display: block; width: 100%; flex: 0 0 auto; }
+#tl-svg-wrap { min-height: 0; }
+#tl-resize-handle {
+  position: absolute; top: 0; left: 0; right: 0; height: 9px; z-index: 30;
+  cursor: ns-resize; touch-action: none;
+}
+#tl-resize-handle::after {
+  content: ''; position: absolute; top: 2px; left: 50%; width: 44px; height: 4px;
+  margin-left: -22px; border-radius: 2px; background: var(--line);
+  transition: background .15s, width .15s, margin-left .15s;
+}
+#tl-resize-handle:hover::after, #tl-resize-handle:focus-visible::after,
+body.resizing-timeline #tl-resize-handle::after { background: var(--accent); width: 72px; margin-left: -36px; }
+#tl-resize-handle:focus-visible { outline: none; }
+body.resizing-timeline, body.resizing-timeline * { cursor: ns-resize !important; user-select: none !important; }
+body.resizing-timeline #timeline { transition: none; }
 
 /* Timeline SVG parts */
 .tl-plot { fill: var(--bg); stroke: var(--line-soft); stroke-width: 1; }
@@ -582,7 +604,9 @@ button.person-portrait:focus-visible { outline: 2px solid var(--accent); outline
   #header { padding: 0 14px; gap: 10px; }
   #header h1 { font-size: 23px; }
   #header .subtitle { font-size: 12px; padding-left: 10px; }
-  #tl-controls { padding: 0 10px; gap: 8px; }
+  #tl-controls { padding: 0 10px; gap: 8px; overflow-x: auto; scrollbar-width: none; }
+  #tl-controls::-webkit-scrollbar { display: none; }
+  #tl-controls > * { flex-shrink: 0; }
   #tl-mode-info { display: none; }
   .period-legend { display: none !important; }
   #map-filters { top: 10px; left: 10px; max-width: calc(100% - 20px); }
@@ -656,6 +680,7 @@ button.person-portrait:focus-visible { outline: 2px solid var(--accent); outline
 </div>
 
 <div id="timeline">
+  <div id="tl-resize-handle" role="separator" tabindex="0" aria-orientation="horizontal" aria-controls="timeline" aria-label="调整时间线高度" title="向上拖动拉高时间线，双击恢复默认；也可使用上下方向键"></div>
   <div id="tl-controls">
     <div id="era-buttons">
       <button class="era-btn active" data-era="all">全部</button>
@@ -675,6 +700,7 @@ button.person-portrait:focus-visible { outline: 2px solid var(--accent); outline
     <span id="period-legend" class="period-legend" aria-hidden="true"></span>
     <span id="tl-mode-info"></span>
   </div>
+  <svg id="timeline-head-svg" aria-hidden="false"></svg>
   <div id="tl-svg-wrap">
     <svg id="timeline-svg"></svg>
   </div>
@@ -762,8 +788,8 @@ const ERA_DEFS = {
 };
 
 // Range threshold: <= this many years → lifeline mode
-const LIFELINE_THRESHOLD = 600;        // default (single-era)
-const LIFELINE_THRESHOLD_DUAL = 1800;  // dual-era selection
+// Views spanning at most this many years show lifespans as bars; wider views show dots.
+const LIFELINE_MAX_SPAN = 2000;
 
 // ═══════════════════════════════════════════════════════════════
 // ISO 3166-1 numeric → alpha-2 (for countries-110m.json)
@@ -878,12 +904,12 @@ function activeSubregions() {
 }
 
 // Timeline heights
-const TL_HEIGHT_DOT = 124;      // px for dots
+const TL_HEIGHT_DOT = 84;       // default body height (px) of the dot lanes
 const TL_CONTROLS_H = 44;       // px for the era/range control bar (matches #tl-controls)
 const TL_DOMAIN_ORDER = ['Nature', 'Spirit', 'Society'];
 const TL_ROW_H = 22;            // px per row in lifeline mode
 const TL_AXIS_H = 30;           // px for axis area
-const TL_MAX_H = 280;           // max px before scrolling
+const TL_MAX_H = 280;           // default max body height (px) of lifeline bars before scrolling
 
 // ── Historical periods ─────────────────────────────────────────
 // Auxiliary, possibly overlapping periods from periods.js. Each visible period
@@ -942,26 +968,37 @@ function periodStripHeight(layout) {
   return layout.rows ? layout.rows * PERIOD_ROW_H + 4 : 0;
 }
 
-function drawPeriods(svg, layout, stripY, tintTop, tintBottom) {
+// Faint full-height background for each visible period. Drawn in both the fixed
+// head and the scrolling body so a period reads as one continuous column.
+function drawPeriodTints(svg, layout, top, bottom) {
+  if (!layout.items.length || bottom <= top) return;
+  svg.append('g').attr('class', 'tl-period-tints')
+    .selectAll('.tl-period-tint').data(layout.items).join('rect')
+    .attr('class', 'tl-period-tint')
+    .attr('x', d => d.x1).attr('y', top)
+    .attr('width', d => d.x2 - d.x1).attr('height', bottom - top)
+    .attr('fill', d => PERIOD_CATEGORIES[d.period.cat].color);
+}
+
+function highlightPeriod(item) {
+  d3.selectAll('.tl-period-tint').classed('hot', t => t === item);
+}
+
+// Labeled capsules, packed into rows starting at stripY.
+function drawPeriodStrip(svg, layout, stripY) {
   if (!layout.items.length) return;
   const color = d => PERIOD_CATEGORIES[d.period.cat].color;
-  const g = svg.append('g').attr('class', 'tl-periods');
-  const tints = g.selectAll('.tl-period-tint').data(layout.items).join('rect')
-    .attr('class', 'tl-period-tint')
-    .attr('x', d => d.x1).attr('y', tintTop)
-    .attr('width', d => d.x2 - d.x1).attr('height', Math.max(0, tintBottom - tintTop))
-    .attr('fill', color);
-  const highlight = d => tints.classed('hot', t => t === d);
-  const caps = g.selectAll('.tl-period').data(layout.items).join('g')
+  const caps = svg.append('g').attr('class', 'tl-periods')
+    .selectAll('.tl-period').data(layout.items).join('g')
     .attr('class', 'tl-period')
     .attr('transform', d => `translate(${d.x1},${stripY + d.row * PERIOD_ROW_H})`)
     .attr('tabindex', 0).attr('role', 'button')
     .attr('aria-label', d => `${d.period.zh}，${periodYears(d.period)}。按回车聚焦此时段`)
-    .on('mouseenter', (evt, d) => { highlight(d); showPeriodTip(evt, d.period); })
+    .on('mouseenter', (evt, d) => { highlightPeriod(d); showPeriodTip(evt, d.period); })
     .on('mousemove', moveTip)
-    .on('mouseleave', () => { highlight(null); hideTip(); })
-    .on('focus', (evt, d) => highlight(d))
-    .on('blur', () => highlight(null))
+    .on('mouseleave', () => { highlightPeriod(null); hideTip(); })
+    .on('focus', (evt, d) => highlightPeriod(d))
+    .on('blur', () => highlightPeriod(null))
     .on('click', (evt, d) => { evt.stopPropagation(); focusPeriod(d.period); })
     .on('keydown', (evt, d) => {
       if (evt.key === 'Enter' || evt.key === ' ') { evt.preventDefault(); focusPeriod(d.period); }
@@ -1013,6 +1050,130 @@ function focusPeriod(p) {
   renderTimeline();
 }
 // ── End historical periods ─────────────────────────────────────
+
+// ── Timeline frame (shared by dot and lifeline views) ───────────
+// Fixed head: era labels, axis and the period strip — always visible on top.
+// Body: dot lanes or lifeline bars; only the body scrolls when bars overflow.
+const TL_LEFT = 20, TL_RIGHT = 16;           // plot content inset (px)
+const TL_HEAD_ERA_H = 20, TL_HEAD_AXIS_H = 20;
+const TL_MIN_BODY_H = 48;
+const TL_HEIGHT_KEY = 'the100:tl-height';
+const TL_ERA_SEGS = [
+  { s: -3200, e: -500, label: '上古' },
+  { s: -500,  e: 500,  label: '古典' },
+  { s: 500,   e: 1400, label: '中世纪' },
+  { s: 1400,  e: 1800, label: '近代' },
+  { s: 1800,  e: 2030, label: '现代' },
+];
+// Total timeline height chosen by dragging its top edge; null = automatic.
+let tlUserHeight = (() => {
+  try {
+    const v = parseInt(localStorage.getItem(TL_HEIGHT_KEY), 10);
+    return Number.isFinite(v) && v > 0 ? v : null;
+  } catch { return null; }
+})();
+
+function tlMaxHeight() {
+  const vh = typeof window !== 'undefined' && window.innerHeight ? window.innerHeight : 900;
+  return Math.max(160, vh - 52 - 140);  // keep ≥140px of map under the 52px header
+}
+
+// Total timeline height and the visible body height for a given head.
+function resolveTimelineHeight(headH, naturalBodyH) {
+  const minTotal = TL_CONTROLS_H + headH + TL_MIN_BODY_H;
+  const total = tlUserHeight == null
+    ? TL_CONTROLS_H + headH + naturalBodyH
+    : Math.max(minTotal, Math.min(tlUserHeight, tlMaxHeight()));
+  return { total, bodyH: total - TL_CONTROLS_H - headH };
+}
+
+// Round tick steps that keep labels at least minGap px apart.
+function niceTicks(start, end, pxPerYear, minGap = 76) {
+  const steps = [10, 25, 50, 100, 200, 250, 500, 1000, 2000];
+  const step = steps.find(s => s * pxPerYear >= minGap) || 2000;
+  const ticks = [];
+  for (let t = Math.ceil(start / step) * step; t <= end; t += step) ticks.push(t);
+  return ticks;
+}
+function tickLabel(t) { return t < 0 ? `BC${-t}` : t === 0 ? '公元0' : String(t); }
+
+function roundedRectPath(x, y, w, h, rTop, rBottom) {
+  return `M${x},${y + rTop}a${rTop},${rTop} 0 0 1 ${rTop},${-rTop}h${w - 2 * rTop}` +
+    `a${rTop},${rTop} 0 0 1 ${rTop},${rTop}v${h - rTop - rBottom}` +
+    `a${rBottom},${rBottom} 0 0 1 ${-rBottom},${rBottom}h${-(w - 2 * rBottom)}` +
+    `a${rBottom},${rBottom} 0 0 1 ${-rBottom},${-rBottom}z`;
+}
+
+// Plot surface and alternating era bands for one section (head or body).
+function drawTimelineSection(svg, xScale, W, top, bottom, roundTop, roundBottom, eraLabelY) {
+  const left = TL_LEFT, right = W - TL_RIGHT;
+  svg.append('path').attr('class', 'tl-plot')
+    .attr('d', roundedRectPath(10.5, top + 0.5, Math.max(0, W - 19), Math.max(16, bottom - top - 1),
+      roundTop ? 8 : 0, roundBottom ? 8 : 0));
+  TL_ERA_SEGS.forEach((seg, i) => {
+    const a = Math.max(xScale(seg.s), left), b = Math.min(xScale(seg.e), right);
+    if (b <= a) return;
+    if (i % 2 === 1) {
+      svg.append('rect').attr('class', 'tl-band-alt')
+        .attr('x', a).attr('y', top + 1).attr('width', b - a).attr('height', Math.max(0, bottom - top - 2));
+    }
+    if (a > left) {
+      svg.append('line').attr('class', 'tl-band-sep')
+        .attr('x1', a).attr('y1', top + 1).attr('x2', a).attr('y2', bottom - 1);
+    }
+    if (eraLabelY != null && b - a >= seg.label.length * 13 + 8) {
+      svg.append('text').attr('class', 'tl-era-label')
+        .attr('x', (a + b) / 2).attr('y', eraLabelY).attr('text-anchor', 'middle')
+        .text(seg.label);
+    }
+  });
+}
+
+// Fixed head: era labels, axis ticks and the period strip. Returns its height.
+function renderTimelineHead(W, xScale, start, end, periodLayout) {
+  const axisY = TL_HEAD_ERA_H + TL_HEAD_AXIS_H;
+  const headH = axisY + 4 + periodStripHeight(periodLayout);
+  const svg = d3.select('#timeline-head-svg').attr('height', headH);
+  svg.selectAll('*').remove();
+  drawTimelineSection(svg, xScale, W, 2, headH, true, false, 16);
+  drawPeriodTints(svg, periodLayout, 3, headH);
+  svg.append('line').attr('class', 'tl-axis')
+    .attr('x1', TL_LEFT).attr('y1', axisY).attr('x2', W - TL_RIGHT).attr('y2', axisY);
+  const ticks = niceTicks(start, end, (W - TL_LEFT - TL_RIGHT) / Math.max(1, end - start));
+  ticks.forEach(t => {
+    const x = xScale(t);
+    if (x < TL_LEFT || x > W - TL_RIGHT) return;
+    svg.append('line').attr('class', 'tl-tick')
+      .attr('x1', x).attr('y1', axisY - 4).attr('x2', x).attr('y2', axisY);
+    svg.append('text').attr('class', 'tl-tick-label')
+      .attr('x', x).attr('y', axisY - 7)
+      .attr('text-anchor', x < TL_LEFT + 18 ? 'start' : x > W - TL_RIGHT - 18 ? 'end' : 'middle')
+      .text(tickLabel(t));
+  });
+  drawPeriodStrip(svg, periodLayout, axisY + 4);
+  return { headH, ticks };
+}
+
+// Body background shared by both views: plot surface, era bands, tints, grid.
+function renderTimelineBody(W, xScale, bodyH, ticks, periodLayout) {
+  const svg = d3.select('#timeline-svg').attr('height', bodyH);
+  svg.selectAll('*').remove();
+  drawTimelineSection(svg, xScale, W, 0, bodyH - 2, false, true, null);
+  drawPeriodTints(svg, periodLayout, 1, bodyH - 3);
+  ticks.forEach(t => {
+    const x = xScale(t);
+    if (x < TL_LEFT || x > W - TL_RIGHT) return;
+    svg.append('line').attr('class', 'tl-grid')
+      .attr('x1', x).attr('y1', 1).attr('x2', x).attr('y2', bodyH - 3);
+  });
+  return svg;
+}
+
+function timelinePeriodLayout(start, end, xScale) {
+  return periodsVisible
+    ? layoutPeriods(allPeriods(), start, end, xScale, periodMaxRows(start, end))
+    : { items: [], rows: 0 };
+}
 
 // ═══════════════════════════════════════════════════════════
 // STATE
@@ -2122,19 +2283,28 @@ function applyRegionEmphasis() {
 // ═══════════════════════════════════════════════════════════
 
 function isLifelineMode(start, end) {
-  const threshold = (eraFirst && eraSecond) ? LIFELINE_THRESHOLD_DUAL : LIFELINE_THRESHOLD;
-  return (end - start) <= threshold;
+  return (end - start) <= LIFELINE_MAX_SPAN;
 }
 
-// Greedy row assignment for lifeline bars
-function assignRows(persons) {
+// Greedy row assignment for lifeline bars, in pixels: a bar's footprint includes
+// its name when the name has to sit outside a short bar.
+const TL_BAR_LABEL_PAD = 10;
+function lifelineExtent(p, xScale, start, end) {
+  const x1 = xScale(Math.max(p.birth, start));
+  const barW = Math.max(xScale(Math.min(p.death, end)) - x1, 2);
+  const labelW = periodLabelWidth(p.zh);
+  const inside = barW >= labelW + TL_BAR_LABEL_PAD;
+  return { x1, barW, inside, right: x1 + barW + (inside ? 0 : labelW + 6) };
+}
+function assignRows(persons, xScale, start, end) {
   const sorted = [...persons].sort((a, b) => a.birth - b.birth);
   const rowEnd = [];
   return sorted.map(p => {
-    let row = rowEnd.findIndex(e => e < p.birth - 3);
-    if (row === -1) { row = rowEnd.length; rowEnd.push(p.death); }
-    else rowEnd[row] = p.death;
-    return { ...p, row };
+    const ext = lifelineExtent(p, xScale, start, end);
+    let row = rowEnd.findIndex(e => e + 4 <= ext.x1);
+    if (row === -1) { row = rowEnd.length; rowEnd.push(ext.right); }
+    else rowEnd[row] = ext.right;
+    return { ...p, row, _ext: ext };
   });
 }
 
@@ -2241,6 +2411,57 @@ function buildTimeline() {
 
   refreshEraButtons = updateEraButtons;
 
+  // Drag the top edge (or use ↑/↓) to resize the timeline; double-click resets.
+  const tlBox = document.getElementById('timeline');
+  const handle = document.getElementById('tl-resize-handle');
+  let drag = null, frame = 0;
+  const currentHeight = () => parseFloat(tlBox.style.height) || tlBox.getBoundingClientRect().height;
+  const setHeight = h => {
+    tlUserHeight = Math.round(h);
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => {
+      renderTimeline();
+      handle.setAttribute('aria-valuenow', String(Math.round(currentHeight())));
+    });
+  };
+  const saveHeight = () => {
+    if (tlUserHeight != null) tlUserHeight = Math.round(currentHeight());  // store the clamped value
+    try {
+      if (tlUserHeight == null) localStorage.removeItem(TL_HEIGHT_KEY);
+      else localStorage.setItem(TL_HEIGHT_KEY, String(tlUserHeight));
+    } catch {}
+  };
+  handle.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    drag = { y: e.clientY, h: currentHeight(), id: e.pointerId };
+    handle.setPointerCapture(e.pointerId);
+    document.body.classList.add('resizing-timeline');
+    hideTip(true);
+  });
+  handle.addEventListener('pointermove', e => {
+    if (drag && e.pointerId === drag.id) setHeight(drag.h + drag.y - e.clientY);
+  });
+  const endDrag = () => {
+    if (!drag) return;
+    drag = null;
+    document.body.classList.remove('resizing-timeline');
+    requestAnimationFrame(saveHeight);
+  };
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(type => handle.addEventListener(type, endDrag));
+  handle.addEventListener('dblclick', () => { tlUserHeight = null; saveHeight(); renderTimeline(); });
+  handle.addEventListener('keydown', e => {
+    const step = e.shiftKey ? 80 : 24;
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHeight(currentHeight() + (e.key === 'ArrowUp' ? step : -step));
+      requestAnimationFrame(() => requestAnimationFrame(saveHeight));
+    } else if (e.key === 'Home' || e.key === 'Enter') {
+      e.preventDefault();
+      tlUserHeight = null; saveHeight(); renderTimeline();
+    }
+  });
+
   // Auxiliary period toggle and legend
   const toggle = document.getElementById('period-toggle');
   const legend = document.getElementById('period-legend');
@@ -2288,85 +2509,21 @@ function renderTimeline() {
 function renderDots(persons, start, end, W) {
   // No domain label column: the full width goes to the dots so they overlap less.
   // Lanes stay color-coded by domain.
-  const LEFT = 22, RIGHT = 14;
-  const xScale = d3.scaleLinear().domain([start, end]).range([LEFT, W - RIGHT]);
-  const periodLayout = periodsVisible
-    ? layoutPeriods(allPeriods(), start, end, xScale, periodMaxRows(start, end)) : { items: [], rows: 0 };
-  const stripH = periodStripHeight(periodLayout);
-  const H = TL_HEIGHT_DOT + stripH;
-  // Inset plot area: a darker surface with its own outline so the era bands
-  // never blend into the surrounding timeline panel.
-  const PLOT_X = LEFT - 8, PLOT_Y = 2, PLOT_R = W - RIGHT + 6, PLOT_B = H - 6;
-  const HEADER_H = 22, AXIS_H = 24;
-  const tl = document.getElementById('timeline');
-  tl.style.height = (TL_CONTROLS_H + H) + 'px';
-  const svg = d3.select('#timeline-svg').attr('height', H);
-  svg.selectAll('*').remove();
+  const xScale = d3.scaleLinear().domain([start, end]).range([TL_LEFT, W - TL_RIGHT]);
+  const periodLayout = timelinePeriodLayout(start, end, xScale);
+  const { headH, ticks } = renderTimelineHead(W, xScale, start, end, periodLayout);
+  const { total, bodyH } = resolveTimelineHeight(headH, TL_HEIGHT_DOT);
+  document.getElementById('timeline').style.height = total + 'px';
+  const svg = renderTimelineBody(W, xScale, bodyH, ticks, periodLayout);
 
-  svg.append('rect').attr('class', 'tl-plot')
-    .attr('x', PLOT_X + 0.5).attr('y', PLOT_Y + 0.5)
-    .attr('width', PLOT_R - PLOT_X - 1).attr('height', PLOT_B - PLOT_Y - 1).attr('rx', 8);
-
-  // Historical eras: every other band gets a faint tint on the plot surface.
-  const eraSegs = [
-    { s: -3200, e: -500 },
-    { s: -500,  e: 500 },
-    { s: 500,   e: 1400 },
-    { s: 1400,  e: 1800 },
-    { s: 1800,  e: 2030 },
-  ];
-  const eraLabels = ['上古','古典','中世纪','近代','现代'];
-  eraSegs.forEach((seg, i) => {
-    const x1 = Math.max(xScale(seg.s), LEFT);
-    const x2 = Math.min(xScale(seg.e), W - RIGHT);
-    if (x2 <= x1) return;
-    if (i % 2 === 1) {
-      svg.append('rect').attr('class', 'tl-band-alt')
-        .attr('x', x1).attr('y', PLOT_Y + 1)
-        .attr('width', x2 - x1).attr('height', PLOT_B - PLOT_Y - 2);
-    }
-    if (x1 > LEFT) {
-      svg.append('line').attr('class', 'tl-band-sep')
-        .attr('x1', x1).attr('y1', PLOT_Y + 1).attr('x2', x1).attr('y2', PLOT_B - 1);
-    }
-    // Skip labels that would not fit inside a narrow band.
-    if (x2 - x1 >= eraLabels[i].length * 13 + 8) {
-      svg.append('text').attr('class', 'tl-era-label')
-        .attr('x', (x1 + x2) / 2).attr('y', PLOT_Y + 15)
-        .attr('text-anchor', 'middle')
-        .text(eraLabels[i]);
-    }
-  });
-
-  // Axis, with the period strip directly above it.
-  const axisY = PLOT_B - AXIS_H + 4;
-  const stripTop = axisY - 2 - stripH;
-  drawPeriods(svg, periodLayout, stripTop + 2, PLOT_Y + 1, axisY);
-  svg.append('line').attr('class', 'tl-axis')
-    .attr('x1', LEFT).attr('y1', axisY).attr('x2', W - RIGHT).attr('y2', axisY);
-
-  const range = end - start;
-  const tickInterval = range > 4000 ? 1000 : range > 1500 ? 500 : range > 500 ? 200 : 100;
-  const tickStart = Math.ceil(start / tickInterval) * tickInterval;
-  for (let t = tickStart; t <= end; t += tickInterval) {
-    const x = xScale(t);
-    if (x < LEFT + 4 || x > W - RIGHT - 4) continue;
-    svg.append('line').attr('class', 'tl-tick')
-      .attr('x1', x).attr('y1', axisY).attr('x2', x).attr('y2', axisY + 4);
-    svg.append('text').attr('class', 'tl-tick-label')
-      .attr('x', x).attr('y', axisY + 15)
-      .attr('text-anchor', 'middle')
-      .text(t < 0 ? `BC${Math.abs(t)}` : t === 0 ? '公元0' : t);
-  }
-
-  // Fixed domain lanes: each person's vertical position stays stable across
-  // time ranges, domain filters, and changes to the person color mode.
-  const laneTop = PLOT_Y + HEADER_H;
-  const rowH = (stripTop - 4 - laneTop) / TL_DOMAIN_ORDER.length;
+  // Fixed domain lanes fill the body: each person's vertical position stays
+  // stable across time ranges, domain filters, and person color modes.
+  const laneTop = 4, laneBottom = bodyH - 6;
+  const rowH = (laneBottom - laneTop) / TL_DOMAIN_ORDER.length;
   TL_DOMAIN_ORDER.forEach((domain, row) => {
     const y = laneTop + row * rowH + rowH / 2;
     svg.append('line').attr('class', 'tl-lane')
-      .attr('x1', LEFT).attr('y1', y).attr('x2', W - RIGHT).attr('y2', y)
+      .attr('x1', TL_LEFT).attr('y1', y).attr('x2', W - TL_RIGHT).attr('y2', y)
       .attr('stroke', DOMAIN_LABELS[domain].color);
   });
   const sorted = [...persons].sort((a, b) => a.birth - b.birth);
@@ -2391,90 +2548,32 @@ function renderDots(persons, start, end, W) {
 
 // ── Lifeline mode ────────────────────────────────────────────
 function renderLifeline(persons, start, end, W) {
-  const withRows = assignRows(persons);
+  const xScale = d3.scaleLinear().domain([start, end]).range([TL_LEFT, W - TL_RIGHT]);
+  const withRows = assignRows(persons, xScale, start, end);
   const numRows = withRows.length ? Math.max(...withRows.map(d => d.row)) + 1 : 0;
-  const LEFT = 20, RIGHT = 22;
-  const xScale = d3.scaleLinear().domain([start, end]).range([LEFT, W - RIGHT]);
-  const periodLayout = periodsVisible
-    ? layoutPeriods(allPeriods(), start, end, xScale, periodMaxRows(start, end)) : { items: [], rows: 0 };
-  const stripH = periodStripHeight(periodLayout);
-  const svgH = TL_AXIS_H + stripH + numRows * TL_ROW_H + 10;
-  const clampH = Math.min(svgH, TL_MAX_H + stripH);
-  const tl = document.getElementById('timeline');
-  tl.style.height = (TL_CONTROLS_H + clampH) + 'px';
-
-  d3.select('#timeline-svg').attr('height', svgH);
-  const svg = d3.select('#timeline-svg');
-  svg.selectAll('*').remove();
-
+  const periodLayout = timelinePeriodLayout(start, end, xScale);
+  const { headH, ticks } = renderTimelineHead(W, xScale, start, end, periodLayout);
   const topPad = 6;
+  const contentH = topPad + numRows * TL_ROW_H + 8;
+  const { total, bodyH } = resolveTimelineHeight(headH, Math.min(contentH, TL_MAX_H));
+  document.getElementById('timeline').style.height = total + 'px';
+  // The body scrolls when bars need more room than the visible height.
+  const svg = renderTimelineBody(W, xScale, Math.max(contentH, bodyH), ticks, periodLayout);
 
-  // Inset plot surface, matching the dot view.
-  svg.append('rect').attr('class', 'tl-plot')
-    .attr('x', 8.5).attr('y', 2.5)
-    .attr('width', Math.max(0, W - 23)).attr('height', Math.max(0, svgH - 5)).attr('rx', 8);
-
-  // Axis at top
-  const axisY = topPad + 14;
-  svg.append('line').attr('class', 'tl-axis')
-    .attr('x1', LEFT).attr('y1', axisY).attr('x2', W - RIGHT).attr('y2', axisY);
-
-  const range = end - start;
-  const tickInterval = range > 300 ? 100 : range > 100 ? 50 : 25;
-  const tickStart = Math.ceil(start / tickInterval) * tickInterval;
-  for (let t = tickStart; t <= end; t += tickInterval) {
-    const x = xScale(t);
-    if (x < LEFT || x > W - RIGHT) continue;
-    svg.append('line').attr('class', 'tl-tick')
-      .attr('x1', x).attr('y1', axisY - 4).attr('x2', x).attr('y2', axisY);
-    // Show fewer labels to avoid crowding
-    const skip = range > 300 ? 2 : 1;
-    if (Math.round((t - tickStart) / tickInterval) % skip === 0) {
-      svg.append('text').attr('class', 'tl-tick-label')
-        .attr('x', x).attr('y', axisY - 7)
-        .attr('text-anchor', x < LEFT + 16 ? 'start' : x > W - RIGHT - 16 ? 'end' : 'middle')
-        .text(t < 0 ? `BC${Math.abs(t)}` : t);
-    }
-  }
-
-  // Grid lines (faint vertical lines at century marks)
-  for (let t = tickStart; t <= end; t += tickInterval) {
-    const x = xScale(t);
-    if (x < LEFT || x > W - RIGHT) continue;
-    svg.append('line').attr('class', 'tl-grid')
-      .attr('x1', x).attr('y1', axisY + 1).attr('x2', x).attr('y2', svgH - 4);
-  }
-
-  // Periods: tint behind the bars, capsule strip just below the axis.
-  drawPeriods(svg, periodLayout, axisY + 6, axisY + 1, svgH - 4);
-
-  // Lifeline bars
   const barH = 14;
-  const barGroups = svg.selectAll('.tl-bar-g')
-    .data(withRows).join('g').attr('class', 'tl-bar-g');
-
   withRows.forEach(d => {
-    const rowY = topPad + TL_AXIS_H + stripH + d.row * TL_ROW_H;
-    const barY = rowY + (TL_ROW_H - barH) / 2;
-    const x1 = xScale(Math.max(d.birth, start));
-    const x2 = xScale(Math.min(d.death, end));
-    const barW = Math.max(x2 - x1, 2);
-    const col = REGIONS[d.region].color;
-
-    d._tlx = x1;
-    d._tly = barY + barH / 2;
-    d._barW = barW;
-    d._barY = barY;
-
-    // Row separator (subtle)
+    const rowY = topPad + d.row * TL_ROW_H;
+    d._tlx = d._ext.x1;
+    d._barW = d._ext.barW;
+    d._barY = rowY + (TL_ROW_H - barH) / 2;
+    d._tly = d._barY + barH / 2;
     if (d.row > 0) {
       svg.append('line').attr('class', 'tl-row-sep')
-        .attr('x1', LEFT).attr('y1', rowY - 1)
-        .attr('x2', W - RIGHT).attr('y2', rowY - 1);
+        .attr('x1', TL_LEFT).attr('y1', rowY - 1)
+        .attr('x2', W - TL_RIGHT).attr('y2', rowY - 1);
     }
   });
 
-  // Draw bars
   svg.selectAll('.tl-bar').data(withRows).join('rect')
     .attr('class', 'tl-bar')
     .attr('x', d => d._tlx)
@@ -2492,46 +2591,37 @@ function renderLifeline(persons, start, end, W) {
   // Birth tick marks
   withRows.forEach(d => {
     if (d.birth >= start) {
-      const bx = xScale(d.birth);
       svg.append('line')
-        .attr('x1', bx).attr('y1', d._barY - 1)
-        .attr('x2', bx).attr('y2', d._barY + barH + 1)
+        .attr('x1', d._tlx).attr('y1', d._barY - 1)
+        .attr('x2', d._tlx).attr('y2', d._barY + barH + 1)
         .attr('stroke', '#fff').attr('stroke-width', 1).attr('opacity', 0.4)
         .attr('pointer-events', 'none');
     }
   });
 
-  // Name labels
+  // Names: inside the bar when they fit, otherwise just to its right
+  // (row packing already reserved that space).
   withRows.forEach(d => {
-    const textX = d._tlx + 4;
-    const textY = d._barY + barH / 2;
-    const availW = d._barW - 6;
-
-    if (d._barW >= 30) {
+    const y = d._barY + barH / 2;
+    if (d._ext.inside) {
       svg.append('text').attr('class', 'tl-bar-label')
-        .attr('x', textX + 2).attr('y', textY)
+        .attr('x', d._tlx + 6).attr('y', y)
         .attr('dominant-baseline', 'middle')
         .text(d.zh);
-    } else {
-      // Label outside bar, to the right
-      if (d._tlx + d._barW + 2 < W - RIGHT - 20) {
-        svg.append('text').attr('class', 'tl-bar-label-out')
-          .attr('x', d._tlx + d._barW + 4)
-          .attr('y', textY)
-          .attr('dominant-baseline', 'middle')
-          .text(d.zh);
-      }
+    } else if (d._tlx + d._barW + 4 < W - TL_RIGHT - 20) {
+      svg.append('text').attr('class', 'tl-bar-label-out')
+        .attr('x', d._tlx + d._barW + 4).attr('y', y)
+        .attr('dominant-baseline', 'middle')
+        .text(d.zh);
     }
   });
 
-  // Rank dots overlay (small rank number on wide bars)
+  // Small rank number on wide bars of the top 20
   withRows.forEach(d => {
-    if (d.rank <= 20 && d._barW >= 18) {
+    if (d.rank <= 20 && d._ext.inside && d._barW >= periodLabelWidth(d.zh) + 34) {
       svg.append('text').attr('class', 'tl-bar-rank')
-        .attr('x', d._tlx + d._barW - 5)
-        .attr('y', d._barY + barH / 2)
-        .attr('dominant-baseline', 'middle')
-        .attr('text-anchor', 'end')
+        .attr('x', d._tlx + d._barW - 5).attr('y', d._barY + barH / 2)
+        .attr('dominant-baseline', 'middle').attr('text-anchor', 'end')
         .text(`#${d.rank}`);
     }
   });
