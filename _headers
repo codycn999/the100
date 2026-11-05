@@ -1,4 +1,5 @@
-# Cache static assets aggressively (they have hashed names or rarely change)
+# Local scripts are cache-busted by the ?v= parameter in index.html (`npm run bump`),
+# so they can be cached briefly without serving stale data after a deploy.
 /data.js
   Cache-Control: public, max-age=3600
 
@@ -8,7 +9,11 @@
 /index.html
   Cache-Control: public, max-age=600
 
-# Security headers
+# Security headers. index.html uses inline <script>/<style>, so 'unsafe-inline' is
+# required until they move to separate files. Portraits come from several image hosts.
 /*
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://cdn.jsdelivr.net; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'

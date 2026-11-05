@@ -17,7 +17,8 @@ for (const file of files) {
   const m = file.match(/THE100-(\d+)/);
   if (!m) continue;
   const rank = parseInt(m[1], 10);
-  const text = fs.readFileSync(path.join(SRC, file), 'utf8');
+  // Normalize line endings so Windows checkouts (core.autocrlf) generate identical output.
+  const text = fs.readFileSync(path.join(SRC, file), 'utf8').replace(/\r\n/g, '\n');
   content[rank] = text;
 }
 

@@ -1,6 +1,9 @@
 # Claude config (session data, not project code)
 .claude/
 
+# Node
+node_modules/
+
 # Cloudflare Wrangler local cache
 .wrangler/
 

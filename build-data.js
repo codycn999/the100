@@ -339,8 +339,8 @@ const REGIONS = ${JSON.stringify(regions, null, 2)};
 
 const DOMAIN_LABELS = {
   Nature:  { label:"自然·科学", color:"#52a8e0" },
-  Spirit:  { label:"思想·文化", color:"#e0a840" },
-  Society: { label:"政治·社会", color:"#e05270" },
+  Spirit:  { label:"思想·文化", color:"#9a6cd0" },
+  Society: { label:"政治·社会", color:"#e5823c" },
 };
 
 const ROLE_LABELS = {
@@ -366,6 +366,12 @@ const ROLE_LABELS = {
   Conqueror:      "征服者",
   Explorer:       "探险家",
 };
+
+// Per-role node colors for map + timeline. Built on the role/domain tree
+// (role/{Domain}/{Group}/{Role}): domain = hue family, group = a band within it,
+// role = a tint inside that band. Nature splits at the group level —
+// Science=蓝, Tech=绿; Spirit=紫; Society=橙.
+// Role colors are maintained in role-colors.js.
 
 const ALL_TAGS = ${JSON.stringify(allTags, null, 2)};
 `;

@@ -1,0 +1,13 @@
+{
+  "name": "the100",
+  "private": true,
+  "description": "中英双语历史人物地图与时间线",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test.cjs",
+    "bump": "node scripts/bump-versions.cjs",
+    "check:build": "node scripts/check-build.cjs"
+  }
+}

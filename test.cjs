@@ -13,6 +13,34 @@ const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]).
 
 test('inline JavaScript parses', () => { new vm.Script(code); });
 
+test('local script versions match file contents (run `npm run bump` after changing them)', () => {
+  const { scriptVersions } = require('./scripts/asset-version.cjs');
+  for (const { file, found, current, expected } of scriptVersions(html)) {
+    assert.ok(found, `index.html loads ${file}`);
+    assert.equal(current, expected, `${file} version is stale`);
+  }
+});
+
+test('build-data.js emits the same static labels and colors as the committed data.js', () => {
+  const block = (text, name) => text.slice(text.indexOf(`const ${name} = {`), text.indexOf('\n};', text.indexOf(`const ${name} = {`)));
+  const lf = text => text.replace(/\r\n/g, '\n');
+  const generator = lf(read('build-data.js')), data = lf(read('data.js'));
+  for (const name of ['DOMAIN_LABELS', 'ROLE_LABELS'])
+    assert.equal(block(generator, name), block(data, name), `${name} drifted`);
+});
+
+test('external dependencies are pinned to exact versions with integrity hashes', () => {
+  const scripts = [...html.matchAll(/<script src="(https:[^"]+)"([^>]*)>/g)];
+  assert.ok(scripts.length >= 2);
+  for (const [, src, attributes] of scripts) {
+    assert.match(src, /@\d+\.\d+\.\d+\//, `${src} pins an exact version`);
+    assert.match(attributes, /integrity="sha384-[A-Za-z0-9+/=]+"/, `${src} has SRI`);
+    assert.match(attributes, /crossorigin="anonymous"/);
+  }
+  for (const [url] of html.matchAll(/https:\/\/cdn\.jsdelivr\.net\/npm\/[^"'\s)]+/g))
+    assert.match(url, /@\d+\.\d+\.\d+\//, `${url} pins an exact version`);
+});
+
 test('site-owned portrait positions are valid and independent of generated data', () => {
   const positions = vm.runInNewContext(read('portrait-positions.js') + ';PORTRAIT_POSITIONS');
   assert.equal(Object.isFrozen(positions), true);

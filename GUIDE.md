@@ -58,7 +58,7 @@
 
 本站提交了已生成的 `data.js`、`content.js`，可直接作为静态网站预览或部署。来源仓库与本站独立维护；复现结果时需记录并使用相同的来源提交和 Node.js 版本。
 
-`index.html` 中 `data.js` 的脚本 URL 带有 `v` 版本参数，用于避开浏览器和 CDN 的旧缓存。更新 `data.js` 后，应同步更新此参数（可使用 `git hash-object data.js` 输出的前七位），再一起提交部署。
+`index.html` 中 `role-colors.js`、`data.js`、`portrait-positions.js`、`content.js` 的脚本 URL 带有 `v` 版本参数，用于避开浏览器和 CDN 的旧缓存。参数值等于 `git hash-object <文件>` 的前七位（按 LF 换行计算，与操作系统无关）。更新这些文件后运行 `npm run bump` 自动同步，再一起提交部署；参数过期时 `npm test` 会失败。`build-content.js` 会把源笔记的换行统一为 LF，Windows 与其他系统生成结果一致。
 
 `docs.suphy.top/file/` 上的人物头像另由 `index.html` 中的 `PORTRAIT_VERSION` 添加固定的 `v` 参数；源图片 URL 已有 `v` 时保留其值。若只替换同一地址的图片内容，应更新 `PORTRAIT_VERSION`（例如日期加修订号），并部署 `index.html`。这与 `data.js` 的版本独立，无需重新生成数据；其他图床的 URL 保持原样。
 

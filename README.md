@@ -4,7 +4,17 @@
 
 ## 开发与验证
 
-使用 Node.js 20 或更新版本。`npm test` 运行网站测试；配置好 `OBSIDIAN_VAULT`（指向源仓库的 `wiki` 目录）后，`npm run check:build` 在临时目录验证数据生成，不覆盖已提交的 `data.js` 和 `content.js`。检查命令会提示生成结果是否与当前提交一致，但不会自动更新或提交数据。
+使用 Node.js 20 或更新版本，无需 `npm install`（项目没有依赖）。
+
+| 命令 | 作用 |
+| --- | --- |
+| `npm test` | 运行网站测试；GitHub Actions 在每次推送和 PR 时自动运行 |
+| `npm run bump` | 按文件内容更新 `index.html` 中本地脚本的 `?v=` 缓存参数 |
+| `npm run check:build` | 配置好 `OBSIDIAN_VAULT`（指向源仓库的 `wiki` 目录）后，在临时目录验证数据生成，不覆盖已提交的 `data.js` 和 `content.js` |
+
+修改 `data.js`、`content.js`、`role-colors.js` 或 `portrait-positions.js` 后须运行 `npm run bump`，否则 `npm test` 会失败，访客也可能拿到旧缓存。`check:build` 只报告生成结果是否与当前提交一致（一致返回 0，不一致返回 1），不会自动更新或提交数据。
+
+外部依赖 D3、TopoJSON、world-atlas 锁定为精确版本，脚本带 SRI 校验；升级时需同步更新 `index.html` 中的版本号和 `integrity` 值。
 
 ## 本地预览
 
