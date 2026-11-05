@@ -19,7 +19,7 @@ const PERSONS = [
     "domain": "Spirit",
     "category": "Religion",
     "role": "Spiritual",
-    "img": "https://docs.suphy.top/file/Muhammad_Calligraphic.svg"
+    "img": "https://docs.suphy.top/file/f_fede25656743b8687490130dd225abc3"
   },
   {
     "rank": 2,
@@ -207,7 +207,7 @@ const PERSONS = [
     "domain": "Nature",
     "category": "Science",
     "role": "Physicist",
-    "img": "https://docs.suphy.top/file/Einstein1.svg"
+    "img": "https://docs.suphy.top/file/f_5037c568a937d5522a2f30252d8b6d60"
   },
   {
     "rank": 11,
@@ -712,7 +712,7 @@ const PERSONS = [
     "domain": "Nature",
     "category": "Tech",
     "role": "Inventor",
-    "img": "https://docs.suphy.top/file/f_c549c16d383c5d3564feea3f296f4f39"
+    "img": "https://docs.suphy.top/file/f_6857b6bb7c3632c3055fa81c6f47d1e8"
   },
   {
     "rank": 36,
@@ -1094,7 +1094,7 @@ const PERSONS = [
     "domain": "Spirit",
     "category": "Religion",
     "role": "Theologian",
-    "img": "https://docs.suphy.top/file/St_Augustine_1024.png"
+    "img": "https://docs.suphy.top/file/f_bde4ff47dfc9b6aa2200ce97810ee5d5"
   },
   {
     "rank": 55,

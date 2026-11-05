@@ -4,12 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>THE 100 · 影响人类历史进程的100名人</title>
-<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
-<script src="https://cdn.jsdelivr.net/npm/topojson@3"></script>
-<script src="role-colors.js"></script>
-<script src="data.js?v=df1902d"></script>
-<script src="portrait-positions.js?v=20261103"></script>
-<script src="content.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3@7.9.2/dist/d3.min.js" integrity="sha384-LxfWGZyh6PaLjBRPf7NWiEYs9Mn0UQ6ZmqbLLZhxlOBBNWF2a2K0Pfc5efkrNnhQ" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson@3.0.2/dist/topojson.min.js" integrity="sha384-9dCJK6nh7skY14HrcvlLYlFga9/MehJjL9ONWRflmiXNRuf8p2jiF4Y5PR881PTq" crossorigin="anonymous"></script>
+<script src="role-colors.js?v=77a7433"></script>
+<script src="data.js?v=25a15a8"></script>
+<script src="portrait-positions.js?v=3340ab6"></script>
+<script src="content.js?v=7a1765a"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1670,7 +1670,7 @@ async function buildMap() {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
-    const loaded = await d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json', { signal: controller.signal });
+    const loaded = await d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json', { signal: controller.signal });
     worldData = loaded;
   } finally { clearTimeout(timeout); }
   const { W, H } = getMapDims();
