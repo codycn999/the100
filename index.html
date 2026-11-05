@@ -1965,6 +1965,31 @@ function initRegionFilter() {
 
 const MAP_W_K = 0.175, MAP_H_K = 0.318;  // Natural Earth 1: scale↔dimension ratios
 
+// world-atlas draws some overseas territories as parts of their parent country
+// (e.g. French Guiana inside France), which would color them like the parent's
+// region. Split such parts into their own features so they get their own region.
+const OVERSEAS_TERRITORIES = [
+  { parentId: '250', a2: 'GF', name: 'French Guiana', id: '254',
+    contains: ([lng, lat]) => lng > -56 && lng < -50 && lat > 1 && lat < 7 },
+];
+function splitOverseasTerritories(features) {
+  const out = [];
+  for (const f of features) {
+    const rules = OVERSEAS_TERRITORIES.filter(r => r.parentId === f.id);
+    if (!rules.length || !f.geometry || f.geometry.type !== 'MultiPolygon') { out.push(f); continue; }
+    let rest = f.geometry.coordinates;
+    for (const rule of rules) {
+      const part = rest.filter(poly => rule.contains(d3.geoCentroid({ type: 'Polygon', coordinates: poly })));
+      if (!part.length) continue;
+      rest = rest.filter(poly => !part.includes(poly));
+      out.push({ type: 'Feature', id: rule.id, properties: { name: rule.name, a2: rule.a2 },
+        geometry: { type: 'MultiPolygon', coordinates: part } });
+    }
+    out.push({ ...f, geometry: { ...f.geometry, coordinates: rest } });
+  }
+  return out;
+}
+
 function getMapDims() {
   const el = document.getElementById('map-svg');
   return { W: el.clientWidth || window.innerWidth, H: el.clientHeight || 400 };
@@ -2136,6 +2161,7 @@ async function buildMap() {
   mapSvg.append('path').attr('class', 'graticule');
 
   const countries = topojson.feature(worldData, worldData.objects.countries);
+  countries.features = splitOverseasTerritories(countries.features);
 
   // Resolve each polygon's region from the (now complete) COUNTRIES table.
   // Unknown countries stay untagged so they are never wrongly highlighted.
@@ -2150,7 +2176,9 @@ async function buildMap() {
   function countryRegion(d) {
     // world-atlas ids are zero-padded 3-digit strings ("040", "008"); the
     // ISO_NUM_TO_A2 keys are unpadded ("40", "8"). Normalize before lookup.
-    const c = COUNTRIES[ISO_NUM_TO_A2[String(parseInt(d.id, 10))] || ''];
+    // Territories split out by splitOverseasTerritories carry their own code.
+    const a2 = (d.properties && d.properties.a2) || ISO_NUM_TO_A2[String(parseInt(d.id, 10))] || '';
+    const c = COUNTRIES[a2];
     if (!c) return NAME_REGION[d.properties && d.properties.name] || { sr: '', ct: '' };
     return { sr: c.subregion || '', ct: c.continent || SUB_TO_CONT[c.subregion] || '' };
   }

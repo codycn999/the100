@@ -86,6 +86,28 @@ test('lifeline bars show for spans up to 2000 years and dragged heights are clam
   assert.equal(height().bodyH, 48, 'keeps a minimum body');
 });
 
+test('French Guiana is split from France so it is colored as South America', () => {
+  const start = code.indexOf('const OVERSEAS_TERRITORIES');
+  const ctx = vm.createContext({
+    // Centroid of a test polygon = its first vertex.
+    d3: { geoCentroid: g => g.coordinates[0][0] },
+  });
+  vm.runInContext(code.slice(start, code.indexOf('\nfunction getMapDims')), ctx);
+  const square = (lng, lat) => [[[lng, lat], [lng + 1, lat], [lng + 1, lat + 1], [lng, lat]]];
+  const france = { type: 'Feature', id: '250', properties: { name: 'France' },
+    geometry: { type: 'MultiPolygon', coordinates: [square(2, 46), square(9, 42), square(-53, 4)] } };
+  const spain = { type: 'Feature', id: '724', properties: { name: 'Spain' },
+    geometry: { type: 'Polygon', coordinates: square(-4, 40) } };
+  const out = JSON.parse(JSON.stringify(vm.runInContext('splitOverseasTerritories', ctx)([france, spain])));
+  const gf = out.find(f => f.properties.a2 === 'GF');
+  assert.ok(gf, 'French Guiana becomes its own feature');
+  assert.equal(gf.geometry.coordinates.length, 1);
+  assert.equal(out.find(f => f.id === '250').geometry.coordinates.length, 2, 'mainland and Corsica stay with France');
+  assert.equal(out.length, 3);
+  const countries = vm.runInNewContext(read('data.js') + ';COUNTRIES');
+  assert.equal(countries.GF.subregion, '南美');
+});
+
 test('self-hosted fonts referenced by index.html exist with their licenses', () => {
   const fonts = [...html.matchAll(/url\("(fonts\/[^"]+)"\)/g)].map(m => m[1]);
   assert.ok(fonts.length >= 1);
