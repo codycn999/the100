@@ -7,7 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
-const VERSIONED_ASSETS = ['role-colors.js', 'data.js', 'portrait-positions.js', 'content.js'];
+const VERSIONED_ASSETS = ['periods.js', 'role-colors.js', 'data.js', 'portrait-positions.js', 'content.js'];
 
 function assetVersion(file) {
   const text = fs.readFileSync(path.join(ROOT, file)).toString('utf8').replace(/\r\n/g, '\n');

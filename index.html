@@ -6,6 +6,7 @@
 <title>THE 100 · 影响人类历史进程的100名人</title>
 <script src="https://cdn.jsdelivr.net/npm/d3@7.9.2/dist/d3.min.js" integrity="sha384-LxfWGZyh6PaLjBRPf7NWiEYs9Mn0UQ6ZmqbLLZhxlOBBNWF2a2K0Pfc5efkrNnhQ" crossorigin="anonymous"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson@3.0.2/dist/topojson.min.js" integrity="sha384-9dCJK6nh7skY14HrcvlLYlFga9/MehJjL9ONWRflmiXNRuf8p2jiF4Y5PR881PTq" crossorigin="anonymous"></script>
+<script src="periods.js?v=d92911f"></script>
 <script src="role-colors.js?v=77a7433"></script>
 <script src="data.js?v=25a15a8"></script>
 <script src="portrait-positions.js?v=3340ab6"></script>
@@ -266,6 +267,38 @@ button { font-family: inherit; }
 .tl-bar { cursor: pointer; }
 .tl-bar:hover { opacity: 1 !important; }
 
+/* Auxiliary historical periods */
+.tl-period-tint { opacity: .045; pointer-events: none; transition: opacity .15s; }
+.tl-period-tint.hot { opacity: .18; }
+.tl-period { cursor: pointer; outline: none; }
+.tl-period rect { fill-opacity: .22; stroke-opacity: .55; stroke-width: 1; transition: fill-opacity .15s, stroke-opacity .15s; }
+.tl-period:hover rect, .tl-period:focus-visible rect { fill-opacity: .42; stroke-opacity: 1; }
+.tl-period:focus-visible rect { stroke-width: 2; }
+.tl-period text { font-size: 10px; font-weight: 600; pointer-events: none; }
+.tl-toggle {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; gap: 6px;
+  background: transparent; border: 1px solid var(--line); border-radius: 8px;
+  color: var(--text-3); font-size: 12px; line-height: 1; padding: 7px 11px; cursor: pointer;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.tl-toggle::before {
+  content: ''; width: 8px; height: 8px; border-radius: 2px;
+  background: linear-gradient(90deg, #8fa8ff 0 25%, #e6c27a 0 50%, #4fd1c5 0 75%, #ef7d7d 0);
+  opacity: .45;
+}
+.tl-toggle:hover { background: var(--surface-3); color: var(--text); }
+.tl-toggle[aria-pressed="true"] { color: var(--text); border-color: #343c4c; background: var(--surface-2); }
+.tl-toggle[aria-pressed="true"]::before { opacity: 1; }
+.period-legend { display: flex; gap: 12px; font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
+.period-legend[hidden] { display: none; }
+.period-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: 0; }
+#tooltip .tt-period-cat { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-3); margin-bottom: 2px; }
+#tooltip .tt-period-cat i { width: 8px; height: 8px; border-radius: 2px; }
+#tooltip .tt-note { margin-top: 6px; color: #cdd5e0; font-size: 12px; line-height: 1.6; }
+#tooltip .tt-people { display: block; color: var(--text-2); line-height: 1.6; }
+#tooltip .tt-hint { margin-top: 4px; font-size: 10.5px; color: var(--text-3); }
+
 /* ── Detail Panel ── */
 #detail-panel {
   position: fixed;
@@ -343,7 +376,7 @@ body.resizing-detail, body.resizing-detail * { cursor: ew-resize !important; use
   position: fixed;
   background: rgba(20, 25, 34, .94); border: 1px solid var(--line); border-radius: 12px;
   padding: 10px 12px; pointer-events: auto; font-size: 12px; line-height: 1.5;
-  z-index: 200; display: none; max-width: 240px;
+  z-index: 200; display: none; max-width: 260px;
   backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
   box-shadow: var(--shadow);
 }
@@ -551,6 +584,7 @@ button.person-portrait:focus-visible { outline: 2px solid var(--accent); outline
   #header .subtitle { font-size: 12px; padding-left: 10px; }
   #tl-controls { padding: 0 10px; gap: 8px; }
   #tl-mode-info { display: none; }
+  .period-legend { display: none !important; }
   #map-filters { top: 10px; left: 10px; max-width: calc(100% - 20px); }
   #map-fit-btns { right: 10px; bottom: 10px; }
   #map-color-btns { left: 10px; bottom: 10px; }
@@ -637,6 +671,8 @@ button.person-portrait:focus-visible { outline: 2px solid var(--accent); outline
       <input type="number" id="yr-end" step="10">
       <button id="yr-apply">确定</button>
     </div>
+    <button id="period-toggle" class="tl-toggle" type="button" aria-pressed="true" title="在时间线上显示或隐藏辅助历史时段">时段</button>
+    <span id="period-legend" class="period-legend" aria-hidden="true"></span>
     <span id="tl-mode-info"></span>
   </div>
   <div id="tl-svg-wrap">
@@ -848,6 +884,135 @@ const TL_DOMAIN_ORDER = ['Nature', 'Spirit', 'Society'];
 const TL_ROW_H = 22;            // px per row in lifeline mode
 const TL_AXIS_H = 30;           // px for axis area
 const TL_MAX_H = 280;           // max px before scrolling
+
+// ── Historical periods ─────────────────────────────────────────
+// Auxiliary, possibly overlapping periods from periods.js. Each visible period
+// tints the plot background and gets a labeled capsule in a strip near the axis.
+const PERIOD_ROW_H = 15;         // px per capsule row
+const PERIOD_BAR_H = 12;         // capsule height
+const PERIOD_MAX_ROWS = 3;       // rows in wide views; extra overlapping periods are left out
+const PERIOD_MAX_ROWS_ZOOMED = 4; // rows when the view spans ≤ PERIOD_TIER2_SPAN years
+const PERIOD_TIER2_SPAN = 2500;  // tier-2 periods appear when the view spans ≤ this many years
+const PERIOD_MIN_W = 4;          // px, so short events (wars, plagues) stay visible
+let periodsVisible = (() => {
+  try { return localStorage.getItem('the100:periods') !== 'off'; } catch { return true; }
+})();
+let refreshEraButtons = () => {};  // set by buildTimeline()
+
+function allPeriods() { return typeof PERIODS === 'undefined' ? [] : PERIODS; }
+function periodLabelWidth(text) {
+  let w = 0;
+  for (const ch of text) w += ch.charCodeAt(0) > 255 ? 10.5 : 6;
+  return w;
+}
+function periodYears(p) {
+  return `${p.approx ? '约 ' : ''}${formatYear(p.start)} — ${p.ongoing ? '至今' : formatYear(p.end)}`;
+}
+
+// Pure layout: choose the periods visible in [start, end] and pack overlapping
+// ones into rows (tier 1 first, then by start year).
+function layoutPeriods(periods, start, end, xScale, maxRows = PERIOD_MAX_ROWS) {
+  const span = end - start;
+  const candidates = periods
+    .filter(p => p.end >= start && p.start <= end && (p.tier === 1 || span <= PERIOD_TIER2_SPAN))
+    .sort((a, b) => a.tier - b.tier || a.start - b.start);
+  const rows = [];
+  const items = [];
+  for (const period of candidates) {
+    const x1 = xScale(Math.max(period.start, start));
+    const x2 = Math.max(xScale(Math.min(period.end, end)), x1 + PERIOD_MIN_W);
+    const showLabel = x2 - x1 >= periodLabelWidth(period.zh) + 10;
+    const fits = row => row.every(([a, b]) => x2 + 2 <= a || x1 >= b + 2);
+    let row = rows.findIndex(fits);
+    if (row === -1) {
+      if (rows.length >= maxRows) continue;
+      row = rows.push([]) - 1;
+    }
+    rows[row].push([x1, x2]);
+    items.push({ period, x1, x2, row, showLabel });
+  }
+  return { items, rows: rows.length };
+}
+
+function periodMaxRows(start, end) {
+  return end - start <= PERIOD_TIER2_SPAN ? PERIOD_MAX_ROWS_ZOOMED : PERIOD_MAX_ROWS;
+}
+
+function periodStripHeight(layout) {
+  return layout.rows ? layout.rows * PERIOD_ROW_H + 4 : 0;
+}
+
+function drawPeriods(svg, layout, stripY, tintTop, tintBottom) {
+  if (!layout.items.length) return;
+  const color = d => PERIOD_CATEGORIES[d.period.cat].color;
+  const g = svg.append('g').attr('class', 'tl-periods');
+  const tints = g.selectAll('.tl-period-tint').data(layout.items).join('rect')
+    .attr('class', 'tl-period-tint')
+    .attr('x', d => d.x1).attr('y', tintTop)
+    .attr('width', d => d.x2 - d.x1).attr('height', Math.max(0, tintBottom - tintTop))
+    .attr('fill', color);
+  const highlight = d => tints.classed('hot', t => t === d);
+  const caps = g.selectAll('.tl-period').data(layout.items).join('g')
+    .attr('class', 'tl-period')
+    .attr('transform', d => `translate(${d.x1},${stripY + d.row * PERIOD_ROW_H})`)
+    .attr('tabindex', 0).attr('role', 'button')
+    .attr('aria-label', d => `${d.period.zh}，${periodYears(d.period)}。按回车聚焦此时段`)
+    .on('mouseenter', (evt, d) => { highlight(d); showPeriodTip(evt, d.period); })
+    .on('mousemove', moveTip)
+    .on('mouseleave', () => { highlight(null); hideTip(); })
+    .on('focus', (evt, d) => highlight(d))
+    .on('blur', () => highlight(null))
+    .on('click', (evt, d) => { evt.stopPropagation(); focusPeriod(d.period); })
+    .on('keydown', (evt, d) => {
+      if (evt.key === 'Enter' || evt.key === ' ') { evt.preventDefault(); focusPeriod(d.period); }
+    });
+  caps.append('rect')
+    .attr('width', d => d.x2 - d.x1).attr('height', PERIOD_BAR_H)
+    .attr('rx', d => Math.min(PERIOD_BAR_H / 2, (d.x2 - d.x1) / 2))
+    .attr('fill', color).attr('stroke', color);
+  caps.filter(d => d.showLabel).append('text')
+    .attr('x', 6).attr('y', PERIOD_BAR_H / 2 + 0.5)
+    .attr('dominant-baseline', 'middle')
+    .attr('fill', color)
+    .text(d => d.period.zh);
+}
+
+function showPeriodTip(evt, p) {
+  if (portraitDialog.open || portraitCropDialog.open || !portraitMenu.hidden) return;
+  clearTimeout(tooltipHideTimer);
+  const cat = PERIOD_CATEGORIES[p.cat];
+  const alive = PERSONS.filter(x => x.birth <= p.end && x.death >= p.start).sort((a, b) => a.rank - b.rank);
+  const names = alive.slice(0, 8).map(x => x.zh).join('、');
+  tooltip.innerHTML = `
+    <div class="tt-period-cat"><i style="background:${cat.color}"></i>${cat.zh}</div>
+    <div class="tt-zh">${p.zh}</div>
+    <div class="tt-en">${p.en}</div>
+    <div class="tt-date">${periodYears(p)}</div>
+    <div class="tt-note">${p.note}</div>
+    <div class="tt-meta tt-people">${alive.length
+      ? `在世人物：${names}${alive.length > 8 ? ` 等 ${alive.length} 人` : ''}`
+      : '百人中无人生活于此时段'}</div>
+    <div class="tt-hint">点击聚焦此时段</div>`;
+  tooltip.style.display = 'block';
+  moveTip(evt);
+}
+
+// Zoom the timeline (and the map's time filter) to a period with some context.
+function focusPeriod(p) {
+  const last = p.ongoing ? ERA_DEFS.all.end : p.end;
+  const pad = Math.max(10, Math.round((last - p.start) * 0.15));
+  tlState.era = 'custom';
+  tlState.start = Math.max(ERA_DEFS.all.start, Math.floor(p.start - pad));
+  tlState.end = Math.min(ERA_DEFS.all.end, Math.ceil(last + pad));
+  eraFirst = null; eraSecond = null;
+  document.getElementById('yr-range').style.display = 'flex';
+  document.getElementById('yr-start').value = tlState.start;
+  document.getElementById('yr-end').value = tlState.end;
+  hideTip(true);
+  refreshEraButtons();
+  renderTimeline();
+}
+// ── End historical periods ─────────────────────────────────────
 
 // ═══════════════════════════════════════════════════════════
 // STATE
@@ -2038,7 +2203,7 @@ function buildTimeline() {
     const s = parseInt(document.getElementById('yr-start').value, 10);
     const e = parseInt(document.getElementById('yr-end').value, 10);
     if (!isNaN(s) && !isNaN(e) && s < e) {
-      tlState.start = s; tlState.end = e;
+      tlState.start = s; tlState.end = e; tlState.era = 'custom';
       // Using fine-tune clears dual selection
       eraFirst = null; eraSecond = null;
       updateEraButtons();
@@ -2059,7 +2224,7 @@ function buildTimeline() {
 
       if (e === 'all') {
         // "全部" active only when nothing selected
-        b.classList.toggle('active', !eraFirst);
+        b.classList.toggle('active', !eraFirst && tlState.era === 'all');
       } else if (isDual) {
         if (e === chronoStart) {
           b.classList.add('range-start');
@@ -2073,6 +2238,28 @@ function buildTimeline() {
       }
     });
   }
+
+  refreshEraButtons = updateEraButtons;
+
+  // Auxiliary period toggle and legend
+  const toggle = document.getElementById('period-toggle');
+  const legend = document.getElementById('period-legend');
+  if (typeof PERIOD_CATEGORIES !== 'undefined') {
+    legend.innerHTML = Object.values(PERIOD_CATEGORIES)
+      .map(c => `<span><i style="background:${c.color}"></i>${c.zh}</span>`).join('');
+  }
+  const syncToggle = () => {
+    toggle.setAttribute('aria-pressed', String(periodsVisible));
+    legend.hidden = !periodsVisible;
+  };
+  syncToggle();
+  toggle.addEventListener('click', () => {
+    periodsVisible = !periodsVisible;
+    try { localStorage.setItem('the100:periods', periodsVisible ? 'on' : 'off'); } catch {}
+    syncToggle();
+    hideTip(true);
+    renderTimeline();
+  });
 
   renderTimeline();
 }
@@ -2099,10 +2286,14 @@ function renderTimeline() {
 
 // ── Dot mode ────────────────────────────────────────────────
 function renderDots(persons, start, end, W) {
-  const H = TL_HEIGHT_DOT;
   // No domain label column: the full width goes to the dots so they overlap less.
   // Lanes stay color-coded by domain.
   const LEFT = 22, RIGHT = 14;
+  const xScale = d3.scaleLinear().domain([start, end]).range([LEFT, W - RIGHT]);
+  const periodLayout = periodsVisible
+    ? layoutPeriods(allPeriods(), start, end, xScale, periodMaxRows(start, end)) : { items: [], rows: 0 };
+  const stripH = periodStripHeight(periodLayout);
+  const H = TL_HEIGHT_DOT + stripH;
   // Inset plot area: a darker surface with its own outline so the era bands
   // never blend into the surrounding timeline panel.
   const PLOT_X = LEFT - 8, PLOT_Y = 2, PLOT_R = W - RIGHT + 6, PLOT_B = H - 6;
@@ -2111,8 +2302,6 @@ function renderDots(persons, start, end, W) {
   tl.style.height = (TL_CONTROLS_H + H) + 'px';
   const svg = d3.select('#timeline-svg').attr('height', H);
   svg.selectAll('*').remove();
-
-  const xScale = d3.scaleLinear().domain([start, end]).range([LEFT, W - RIGHT]);
 
   svg.append('rect').attr('class', 'tl-plot')
     .attr('x', PLOT_X + 0.5).attr('y', PLOT_Y + 0.5)
@@ -2149,8 +2338,10 @@ function renderDots(persons, start, end, W) {
     }
   });
 
-  // Axis
+  // Axis, with the period strip directly above it.
   const axisY = PLOT_B - AXIS_H + 4;
+  const stripTop = axisY - 2 - stripH;
+  drawPeriods(svg, periodLayout, stripTop + 2, PLOT_Y + 1, axisY);
   svg.append('line').attr('class', 'tl-axis')
     .attr('x1', LEFT).attr('y1', axisY).attr('x2', W - RIGHT).attr('y2', axisY);
 
@@ -2171,7 +2362,7 @@ function renderDots(persons, start, end, W) {
   // Fixed domain lanes: each person's vertical position stays stable across
   // time ranges, domain filters, and changes to the person color mode.
   const laneTop = PLOT_Y + HEADER_H;
-  const rowH = (axisY - 4 - laneTop) / TL_DOMAIN_ORDER.length;
+  const rowH = (stripTop - 4 - laneTop) / TL_DOMAIN_ORDER.length;
   TL_DOMAIN_ORDER.forEach((domain, row) => {
     const y = laneTop + row * rowH + rowH / 2;
     svg.append('line').attr('class', 'tl-lane')
@@ -2202,8 +2393,13 @@ function renderDots(persons, start, end, W) {
 function renderLifeline(persons, start, end, W) {
   const withRows = assignRows(persons);
   const numRows = withRows.length ? Math.max(...withRows.map(d => d.row)) + 1 : 0;
-  const svgH = TL_AXIS_H + numRows * TL_ROW_H + 10;
-  const clampH = Math.min(svgH, TL_MAX_H);
+  const LEFT = 20, RIGHT = 22;
+  const xScale = d3.scaleLinear().domain([start, end]).range([LEFT, W - RIGHT]);
+  const periodLayout = periodsVisible
+    ? layoutPeriods(allPeriods(), start, end, xScale, periodMaxRows(start, end)) : { items: [], rows: 0 };
+  const stripH = periodStripHeight(periodLayout);
+  const svgH = TL_AXIS_H + stripH + numRows * TL_ROW_H + 10;
+  const clampH = Math.min(svgH, TL_MAX_H + stripH);
   const tl = document.getElementById('timeline');
   tl.style.height = (TL_CONTROLS_H + clampH) + 'px';
 
@@ -2211,8 +2407,6 @@ function renderLifeline(persons, start, end, W) {
   const svg = d3.select('#timeline-svg');
   svg.selectAll('*').remove();
 
-  const LEFT = 20, RIGHT = 22;
-  const xScale = d3.scaleLinear().domain([start, end]).range([LEFT, W - RIGHT]);
   const topPad = 6;
 
   // Inset plot surface, matching the dot view.
@@ -2251,13 +2445,16 @@ function renderLifeline(persons, start, end, W) {
       .attr('x1', x).attr('y1', axisY + 1).attr('x2', x).attr('y2', svgH - 4);
   }
 
+  // Periods: tint behind the bars, capsule strip just below the axis.
+  drawPeriods(svg, periodLayout, axisY + 6, axisY + 1, svgH - 4);
+
   // Lifeline bars
   const barH = 14;
   const barGroups = svg.selectAll('.tl-bar-g')
     .data(withRows).join('g').attr('class', 'tl-bar-g');
 
   withRows.forEach(d => {
-    const rowY = topPad + TL_AXIS_H + d.row * TL_ROW_H;
+    const rowY = topPad + TL_AXIS_H + stripH + d.row * TL_ROW_H;
     const barY = rowY + (TL_ROW_H - barH) / 2;
     const x1 = xScale(Math.max(d.birth, start));
     const x2 = xScale(Math.min(d.death, end));

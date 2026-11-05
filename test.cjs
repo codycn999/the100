@@ -29,6 +29,44 @@ test('build-data.js emits the same static labels and colors as the committed dat
     assert.equal(block(generator, name), block(data, name), `${name} drifted`);
 });
 
+test('historical periods are well-formed site data', () => {
+  const { PERIODS, PERIOD_CATEGORIES } = vm.runInNewContext(read('periods.js') + ';({ PERIODS, PERIOD_CATEGORIES })');
+  assert.ok(PERIODS.length >= 20);
+  assert.ok(Object.isFrozen(PERIODS));
+  const ids = new Set();
+  for (const p of PERIODS) {
+    assert.ok(!ids.has(p.id), `duplicate id ${p.id}`); ids.add(p.id);
+    assert.ok(Number.isInteger(p.start) && Number.isInteger(p.end) && p.start < p.end, `${p.id} years`);
+    assert.ok(p.start >= -3200 && p.end <= 2030, `${p.id} within the timeline`);
+    assert.ok(PERIOD_CATEGORIES[p.cat], `${p.id} category`);
+    assert.ok(p.tier === 1 || p.tier === 2, `${p.id} tier`);
+    for (const key of ['zh', 'en', 'note']) assert.ok(typeof p[key] === 'string' && p[key].trim(), `${p.id} ${key}`);
+    if (p.ongoing) assert.equal(p.end, 2030, `${p.id} ongoing periods draw to the end of the timeline`);
+  }
+  for (const id of ['renaissance', 'ww1', 'ww2']) assert.ok(ids.has(id), `${id} is included`);
+});
+
+test('period layout packs overlaps into rows, hides tier 2 when zoomed out, and caps rows', () => {
+  const start = code.indexOf('// ── Historical periods'), end = code.indexOf('// ── End historical periods');
+  const context = vm.createContext({});
+  vm.runInContext(code.slice(start, end), context);
+  const layout = (periods, s, e, maxRows) => JSON.parse(JSON.stringify(vm.runInContext('layoutPeriods', context)(
+    periods, s, e, year => (year - s) / (e - s) * 1000, maxRows)));
+  const p = (id, start, end, tier = 1) => ({ id, zh: id, start, end, tier });
+  const wide = layout([p('a', 0, 100), p('b', 50, 150), p('c', 200, 300), p('minor', 0, 10, 2)], -3200, 2030);
+  assert.deepEqual(wide.items.map(i => [i.period.id, i.row]), [['a', 0], ['b', 1], ['c', 0]]);
+  assert.equal(wide.rows, 2);
+  const zoomed = layout([p('minor', 0, 10, 2)], 0, 100);
+  assert.equal(zoomed.items.length, 1, 'tier 2 shows in narrow views');
+  const blip = layout([p('war', 1914, 1918)], -3200, 2030).items[0];
+  assert.ok(blip.x2 - blip.x1 >= 4, 'short periods keep a visible width');
+  assert.equal(blip.showLabel, false, 'labels only show when they fit');
+  const capped = layout([p('x', 0, 100), p('y', 0, 100), p('z', 0, 100)], 0, 100, 2);
+  assert.equal(capped.rows, 2);
+  assert.equal(capped.items.length, 2);
+  assert.equal(layout([p('gone', 2100, 2200)], 0, 100).items.length, 0, 'out-of-range periods are skipped');
+});
+
 test('self-hosted fonts referenced by index.html exist with their licenses', () => {
   const fonts = [...html.matchAll(/url\("(fonts\/[^"]+)"\)/g)].map(m => m[1]);
   assert.ok(fonts.length >= 1);
