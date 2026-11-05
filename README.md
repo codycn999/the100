@@ -18,7 +18,7 @@
 
 ## 本地预览
 
-使用任意静态 HTTP 服务器打开本目录。地图依赖外部 D3、TopoJSON 和 world-atlas 资源；地图数据失败时可重试，时间线仍可使用。
+使用任意静态 HTTP 服务器打开本目录。标题字体 DM Serif Display 自托管在 `fonts/`（SIL OFL 1.1，许可证同目录），不依赖 Google Fonts。地图依赖外部 D3、TopoJSON 和 world-atlas 资源；地图数据失败时可重试，时间线仍可使用。
 
 ## 重新生成数据
 

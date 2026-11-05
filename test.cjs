@@ -29,6 +29,13 @@ test('build-data.js emits the same static labels and colors as the committed dat
     assert.equal(block(generator, name), block(data, name), `${name} drifted`);
 });
 
+test('self-hosted fonts referenced by index.html exist with their licenses', () => {
+  const fonts = [...html.matchAll(/url\("(fonts\/[^"]+)"\)/g)].map(m => m[1]);
+  assert.ok(fonts.length >= 1);
+  for (const font of fonts) assert.ok(fs.existsSync(path.join(__dirname, font)), `${font} exists`);
+  assert.ok(fs.readdirSync(path.join(__dirname, 'fonts')).some(f => f.startsWith('OFL')), 'font license is included');
+});
+
 test('external dependencies are pinned to exact versions with integrity hashes', () => {
   const scripts = [...html.matchAll(/<script src="(https:[^"]+)"([^>]*)>/g)];
   assert.ok(scripts.length >= 2);
@@ -323,7 +330,7 @@ test('dot timeline keeps people in fixed domain lanes across ranges and color mo
   vm.runInContext(read('data.js') + read('role-colors.js') + colors + constants + dots, context);
   assert.equal(vm.runInContext('nodeColor(people[0])', context), '#d07828', 'default person color comes from their role');
   vm.runInContext('renderDots(people, 0, 2000, 800)', context);
-  assert.deepEqual(labels, ['自然·科学', '思想·文化', '政治·社会']);
+  assert.deepEqual(labels, [], 'no domain label column takes horizontal space from the dots');
   const [society, nature, spirit, inventor, spiritual] = people;
   assert.ok(nature._tly < spirit._tly && spirit._tly < society._tly);
   assert.equal(nature._tly, inventor._tly);
